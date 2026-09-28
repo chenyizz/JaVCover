@@ -1,0 +1,25 @@
+# 仅发布必要文件：默认忽略所有顶层条目，再按白名单放行。
+# 这样 AGENTS.md、opencode.jsonc、.vscode/、docs/、issue/ 等可能含个人信息的
+# 开发辅助文件都不会进入仓库。
+/*
+!/.gitignore
+!/README.md
+!/pyproject.toml
+!/run_javcover.py
+!/build.ps1
+!/src
+!/tests
+!/tools
+!/installer
+
+# 始终排除环境、缓存与构建产物（即使位于白名单目录内）
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.spec
+build/
+dist/
+dist-onefile/
+release/
+.pytest_cache/

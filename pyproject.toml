@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "javcover"
+version = "1.0.0"
+description = "Offline desktop editor for disc-cover templates"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "PySide6>=6.8,<7",
+]
+
+[project.optional-dependencies]
+psd = ["psd-tools>=1.9,<2"]
+build = ["pyinstaller>=6.0,<7"]
+
+[project.scripts]
+javcover = "javcover.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+javcover = ["icons/*.svg", "icons/LICENSE-IconPark.txt"]
