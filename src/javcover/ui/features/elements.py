@@ -6,10 +6,8 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QSpinBox, QWidget
 from javcover.core.constants import _BLEND_MODE_LABELS
-from javcover.services.image_ops import decode_png
 from javcover.core.models import BLEND_MODES, DesignElement, Rect
 from javcover.ui.dialogs.text_element import TextElementDialog
-from javcover.ui.dialogs.image_edit import ImageEditDialog
 from javcover.ui.widgets.scrub import ScrubSpinBox
 from uuid import uuid4
 import copy
@@ -326,74 +324,6 @@ class ElementPanelMixin:
         self.view.select_element(element.id)
         self._finish_edit()
 
-    def _on_edit_requested(self, _kind: str, _target_id: str) -> None:
-        self.edit_selected_image()
-
-    def edit_selected_image(self) -> None:
-        element = self.view._element(self.view.selected_element_id)
-        region = self._selected_region()
-        image = None
-        frame = None
-        fit = "stretch"
-        offset = (0, 0)
-        target: tuple[str, object] | None = None
-        allow_pan, allow_crop = False, True
-        if element is not None and element.kind == "image" and element.png:
-            image = decode_png(element.png)
-            frame = QSize(element.width, element.height)
-            target = ("element", element)
-        elif region is not None and region.background_png:
-            image = decode_png(region.background_png)
-            frame = QSize(region.rect.width, region.rect.height)
-            fit = region.fit
-            offset = (region.bg_dx, region.bg_dy)
-            target = ("region", region)
-            allow_pan = True
-        if target is None or image is None or frame is None:
-            self._error("无可编辑图片", "请选择带图片的图层，或有背景的区域。")
-            return
-        dialog = ImageEditDialog(
-            self,
-            image,
-            frame,
-            fit,
-            offset,
-            allow_pan=allow_pan,
-            allow_crop=allow_crop,
-            title="编辑图片",
-        )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        cropped = dialog.cropped()
-        new_offset = dialog.offset()
-        self._begin_edit()
-        kind, obj = target
-        if kind == "element":
-            if cropped is not None:
-                png, rect = cropped
-                obj.png = png
-                obj.rect = Rect(
-                    obj.x + round(rect.x()),
-                    obj.y + round(rect.y()),
-                    max(1, round(rect.width())),
-                    max(1, round(rect.height())),
-                ).bounded(self.project.width, self.project.height)
-        else:
-            if cropped is not None:
-                png, rect = cropped
-                obj.background_png = png
-                obj.rect = Rect(
-                    obj.rect.x + round(rect.x()),
-                    obj.rect.y + round(rect.y()),
-                    max(1, round(rect.width())),
-                    max(1, round(rect.height())),
-                ).bounded(self.project.width, self.project.height)
-                obj.bg_dx = 0
-                obj.bg_dy = 0
-            else:
-                obj.bg_dx, obj.bg_dy = new_offset
-        self.view.refresh_overlays()
-        self._finish_edit()
 
     def _rename_element(self) -> None:
         element = self.view._element(self.view.selected_element_id)

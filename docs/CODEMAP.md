@@ -23,11 +23,13 @@ src/javcover/
 ├── icons/                      # 图标与许可证
 └── ui/
     ├── main_window.py          # MainWindow 外壳（菜单、面板框架、窗口装饰）
+    ├── editor_tab.py           # EditorTab：编辑标签页（控件条 + ImageEditor）
     ├── canvas/                 # 画布相关
-    │   ├── scene.py            # CoverScene（网格、参考线跨视图、光盘/印刷叠加）
+    │   ├── scene.py            # CoverScene（网格、参考线跨视图、光盘/印刷叠加、裁剪预览）
     │   ├── items.py            # RegionItem / DesignElementItem
     │   ├── view.py             # CoverView（工具、拖拽、缩放、拖放）
-    │   └── crop.py             # CropOverlay（绘制）+ CropTool（交互状态机）
+    │   ├── crop.py             # CropOverlay（绘制）+ CropTool（画布裁剪状态机）
+    │   └── image_editor.py     # ImageEditor（平移/裁剪/吸附/滚轮缩放，非模态编辑器）
     ├── widgets/                # 通用控件
     │   ├── panel.py            # PanelDock / PanelTitleBar（卡片模板）
     │   ├── flow_layout.py      # FlowLayout（自动折行）
@@ -37,14 +39,14 @@ src/javcover/
     ├── dialogs/                # 对话框
     │   ├── preferences.py      # PreferencesDialog
     │   ├── text_element.py     # TextElementDialog
-    │   ├── new_canvas.py       # NewCanvasDialog + CANVAS_PRESETS
-    │   └── image_edit.py       # ImageEditDialog（平移/裁剪，滚轮缩放）
+    │   └── new_canvas.py       # NewCanvasDialog + CANVAS_PRESETS
     └── features/               # MainWindow 功能混入（每个模块一个职责）
         ├── preferences.py      # 工具栏/工具面板/偏好/网格/吸附
         ├── project.py          # 新建/打开/保存/撤销/自动保存恢复
         ├── exporting.py        # 单张/CMYK/流水线批量导出
         ├── assets.py           # 素材库、拖放建层、素材刷新/重链接
         ├── assist.py           # 色块/OCR 分析与设置
+        ├── editing.py          # 中央标签页（封面 + 图片/区域编辑标签），应用裁剪/平移
         ├── regions.py          # 区域面板与操作
         ├── guides.py           # 参考线面板与操作
         └── elements.py         # 图层面板、文字/图片编辑、层级
@@ -84,7 +86,8 @@ app.main
 - `services/assist.py`：`suggest_color_blocks`、`recognize_japanese_text(..., cancel_event)`、`list_tesseract_languages`、`resolve_tesseract`。
 - `services/psd_import.py`：`import_psd`、`rasterize_psd`、`import_psd_overlay`。
 - `services/template_io.py`：`save_project` / `load_project`，`FORMAT_VERSION = 7`，读 v1–v7。
-- `ui/canvas/scene.py` / `items.py` / `view.py` / `crop.py`：场景、图元、交互视图、裁剪工具。
+- `ui/canvas/scene.py` / `items.py` / `view.py` / `crop.py` / `image_editor.py`：场景、图元、交互视图、画布裁剪工具、非模态图片编辑器。
+- `ui/editor_tab.py` / `ui/features/editing.py`：中央标签页系统——封面画布为标签 0，双击图片图层/区域背景打开“编辑”标签（可切换、非模态），`ImageEditor` 支持平移/裁剪/吸附/滚轮缩放/中右键平移；应用时写回并关闭标签。
 - `ui/widgets/*`、`ui/dialogs/*`：通用控件与对话框（见目录树）。
 - `ui/features/*`：见目录树。
 

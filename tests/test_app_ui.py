@@ -1131,29 +1131,58 @@ class MainWindowStyleTests(unittest.TestCase):
         finally:
             spin.close()
 
-    def test_image_edit_dialog_crops(self) -> None:
+    def test_image_editor_crops(self) -> None:
         from PySide6.QtCore import QRectF
 
         from javcover.services.image_ops import decode_png
-        from javcover.ui.dialogs.image_edit import ImageEditDialog
+        from javcover.ui.canvas.image_editor import ImageEditor
 
         image = QImage(40, 20, QImage.Format.Format_ARGB32)
         image.fill(QColor("#336699"))
-        dialog = ImageEditDialog(
-            None, image, QSize(40, 20), "stretch", (0, 0),
-            allow_pan=False, allow_crop=True, title="t",
+        editor = ImageEditor(
+            image, QSize(40, 20), "stretch", (0, 0),
+            allow_pan=False, allow_crop=True,
         )
         try:
-            dialog.preview.mode = "crop"
-            dialog.preview.crop = QRectF(5, 5, 10, 10)
-            dialog.accept()
-            cropped = dialog.cropped()
-            self.assertIsNotNone(cropped)
-            png, rect = cropped
+            editor.set_mode("crop")
+            editor.crop_overlay.set_crop(QRectF(5, 5, 10, 10))
+            result = editor.crop_result()
+            self.assertIsNotNone(result)
+            png, rect = result
             self.assertEqual(decode_png(png).width(), 10)
             self.assertEqual(rect, QRectF(5, 5, 10, 10))
         finally:
-            dialog.close()
+            editor.close()
+
+    def test_layer_editor_opens_as_tab(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            window = MainWindow(
+                settings=QSettings(
+                    str(Path(directory) / "ui.ini"), QSettings.Format.IniFormat
+                )
+            )
+            window.show()
+            self.app.processEvents()
+            image = QImage(30, 20, QImage.Format.Format_ARGB32)
+            image.fill(QColor("#336699"))
+            element = DesignElement(
+                kind="image", x=0, y=0, width=30, height=20, name="logo",
+                png=encode_png(image),
+            )
+            window.project.elements.append(element)
+            window.view.refresh_overlays()
+            window.view.select_element(element.id)
+            try:
+                self.assertEqual(window.tabs.count(), 1)
+                window.edit_selected_image()
+                self.assertEqual(window.tabs.count(), 2)
+                self.assertIn(("element", element.id), window._editor_tabs)
+                key = ("element", element.id)
+                window._close_editor(key)
+                self.assertEqual(window.tabs.count(), 1)
+            finally:
+                window.dirty = False
+                window.close()
 
     def test_panel_template_names_and_features(self) -> None:
         from javcover.ui.widgets.panel import PanelTitleBar
@@ -1195,23 +1224,32 @@ class MainWindowStyleTests(unittest.TestCase):
                 window.dirty = False
                 window.close()
 
-    def test_image_edit_dialog_zoom(self) -> None:
-        from javcover.ui.dialogs.image_edit import ImageEditDialog
+    def test_image_editor_zoom_and_snap(self) -> None:
+        from PySide6.QtCore import QRectF
+
+        from javcover.ui.canvas.image_editor import ImageEditor
 
         image = QImage(40, 20, QImage.Format.Format_ARGB32)
         image.fill(QColor("#336699"))
-        dialog = ImageEditDialog(
-            None, image, QSize(40, 20), "stretch", (0, 0),
-            allow_pan=False, allow_crop=True, title="t",
+        editor = ImageEditor(
+            image, QSize(100, 100), "stretch", (0, 0),
+            allow_pan=True, allow_crop=True,
         )
         try:
-            dialog.preview.set_zoom(2.0)
-            self.assertAlmostEqual(dialog.preview.zoom, 2.0)
-            dialog.preview.set_zoom(1000.0)
-            self.assertLessEqual(dialog.preview.zoom, 12.0)
-            self.assertGreaterEqual(dialog.preview.zoom, 0.2)
+            editor.set_zoom(2.0)
+            self.assertAlmostEqual(editor.zoom, 2.0)
+            editor.set_zoom(1000.0)
+            self.assertLessEqual(editor.zoom, 12.0)
+            editor.set_zoom(0.001)
+            self.assertGreaterEqual(editor.zoom, 0.2)
+            editor.set_zoom(1.0)
+            editor.grid_step = 10
+            editor.snap_enabled = True
+            snapped = editor._snap(QRectF(11, 11, 20, 20))
+            self.assertEqual(snapped.x(), 10)
+            self.assertEqual(snapped.y(), 10)
         finally:
-            dialog.close()
+            editor.close()
 
     def test_grid_spin_buttons_step_and_respect_one_minimum(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

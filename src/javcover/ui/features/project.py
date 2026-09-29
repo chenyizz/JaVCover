@@ -84,6 +84,7 @@ class ProjectMixin:
             self._clear_recovery()
 
     def _replace_project(self, project: Project, path: Path | None) -> None:
+        self.close_all_editor_tabs()
         if project.base_png:
             base = decode_png(project.base_png)
             if base.width() != project.width or base.height() != project.height:

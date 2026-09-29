@@ -9,12 +9,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPen
-from PySide6.QtWidgets import (
-    QGraphicsObject,
-    QMenu,
-    QStyleOptionGraphicsItem,
-    QWidget,
-)
+from PySide6.QtWidgets import QMenu
 
 from javcover.core.crop import crop_image_to_rect
 from javcover.core.errors import ImageError
@@ -24,30 +19,23 @@ from javcover.core.models import Rect
 MIN_CROP = 2.0
 HANDLE_HALF_PX = 4.0
 HIT_TOLERANCE_PX = 9.0
-_MARGIN = 14
 
 
-class CropOverlay(QGraphicsObject):
+class CropOverlay:
+    """Preview state for a crop session (drawn in the view foreground)."""
+
     HANDLES = ("nw", "n", "ne", "e", "se", "s", "sw", "w")
 
     def __init__(
         self,
         bounds: QRectF,
-        grid_size: int = 100,
-        grid_subdivisions: int = 4,
+        grid_divisions: int = 3,
     ) -> None:
-        super().__init__()
         self.bounds = QRectF(bounds)
         self.rect = QRectF(bounds)
-        self.grid_size = max(1, grid_size)
-        self.grid_subdivisions = max(1, grid_subdivisions)
-        self.setZValue(30)
-        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.grid_divisions = max(0, grid_divisions)
 
     # -- geometry ---------------------------------------------------------
-    def boundingRect(self) -> QRectF:  # noqa: N802 (Qt API)
-        return self.bounds.adjusted(-_MARGIN, -_MARGIN, _MARGIN, _MARGIN)
-
     def handle_points(self) -> dict[str, QPointF]:
         rect = self.rect
         return {
@@ -130,18 +118,10 @@ class CropOverlay(QGraphicsObject):
         return QRectF(x, y, rect.width(), rect.height())
 
     def set_crop(self, rect: QRectF) -> None:
-        self.prepareGeometryChange()
         self.rect = rect.intersected(self.bounds)
-        self.update()
 
     # -- painting ---------------------------------------------------------
-    def paint(
-        self,
-        painter: QPainter,
-        option: QStyleOptionGraphicsItem,
-        widget: QWidget | None = None,
-    ) -> None:
-        del option, widget
+    def paint(self, painter: QPainter) -> None:
         crop = self.rect
         bounds = self.bounds
         scale = max(painter.worldTransform().m11(), 0.01)
@@ -158,26 +138,30 @@ class CropOverlay(QGraphicsObject):
         ):
             if region.width() > 0 and region.height() > 0:
                 painter.drawRect(region)
-        # Rule-of-thirds style grid, configurable.
-        spacing = self.grid_size / self.grid_subdivisions
-        if spacing > 0 and self.rect.width() > 0:
-            pen = QPen(QColor(255, 255, 255, 140), 1)
+        # Rule-of-thirds grid, subtle and skipped when too dense on screen.
+        if (
+            self.grid_divisions > 0
+            and crop.width() * scale >= 40
+            and crop.height() * scale >= 40
+        ):
+            pen = QPen(QColor(255, 255, 255, 110), 1)
             pen.setCosmetic(True)
             painter.setPen(pen)
-            value = spacing
-            while value < crop.width():
-                x = crop.left() + value
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            for index in range(1, self.grid_divisions):
+                x = crop.left() + crop.width() * index / self.grid_divisions
+                y = crop.top() + crop.height() * index / self.grid_divisions
                 painter.drawLine(QPointF(x, crop.top()), QPointF(x, crop.bottom()))
-                value += spacing
-            value = spacing
-            while value < crop.height():
-                y = crop.top() + value
                 painter.drawLine(QPointF(crop.left(), y), QPointF(crop.right(), y))
-                value += spacing
+        # Border with a dark halo so it reads over any content.
+        halo = QPen(QColor(0, 0, 0, 170), 4)
+        halo.setCosmetic(True)
+        painter.setPen(halo)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(crop)
         pen = QPen(QColor("#ffd400"), 2)
         pen.setCosmetic(True)
         painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(crop)
         half = HANDLE_HALF_PX / scale
         painter.setPen(Qt.PenStyle.NoPen)
@@ -249,18 +233,17 @@ class CropTool:
             self.target = None
             return False
         self.remove_overlay()
-        self.overlay = CropOverlay(
-            bounds, self.view.grid_size, self.view.grid_subdivisions
-        )
-        self.view.cover_scene.addItem(self.overlay)
+        self.overlay = CropOverlay(bounds)
+        self.view.cover_scene.crop_overlay = self.overlay
+        self.view.cover_scene.update()
         self.drag = None
         return True
 
     def remove_overlay(self) -> None:
-        if self.overlay is not None:
-            self.view.cover_scene.removeItem(self.overlay)
-            self.overlay = None
+        self.view.cover_scene.crop_overlay = None
+        self.overlay = None
         self.drag = None
+        self.view.cover_scene.update()
 
     def cancel(self) -> None:
         if self.overlay is None and self.target is None:
@@ -355,7 +338,7 @@ class CropTool:
             self.drag = "new"
             self.rect_start = QRectF(point, point)
         self.drag_origin = point
-        overlay.update()
+        self.view.cover_scene.update()
         return True
 
     def move(self, point: QPointF, modifiers: Qt.KeyboardModifier) -> None:
@@ -378,6 +361,7 @@ class CropTool:
                     from_center=bool(modifiers & Qt.KeyboardModifier.AltModifier),
                 )
             )
+        self.view.cover_scene.update()
 
     def release(self) -> None:
         self.drag = None

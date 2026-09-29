@@ -25,6 +25,7 @@ from javcover.ui.features.assist import AssistMixin
 from javcover.ui.features.regions import RegionPanelMixin
 from javcover.ui.features.guides import GuidePanelMixin
 from javcover.ui.features.elements import ElementPanelMixin
+from javcover.ui.features.editing import EditingMixin
 
 
 class MainWindow(
@@ -36,6 +37,7 @@ class MainWindow(
     RegionPanelMixin,
     GuidePanelMixin,
     ElementPanelMixin,
+    EditingMixin,
     QMainWindow,
 ):
     def __init__(self, settings: QSettings | None = None) -> None:
@@ -160,7 +162,7 @@ class MainWindow(
         self._create_guide_dock()
         self._create_element_dock()
         self._create_asset_store()
-        self.setCentralWidget(self.ruler_frame)
+        self.setCentralWidget(self.build_central_tabs(self.ruler_frame))
         self._create_menu_bar_controls()
         self._update_rounded_window_shape()
         self.statusBar().setSizeGripEnabled(True)

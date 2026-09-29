@@ -361,7 +361,7 @@ class CanvasInteractionTests(unittest.TestCase):
     def test_crop_overlay_geometry(self) -> None:
         from javcover.ui.canvas.crop import CropOverlay
 
-        overlay = CropOverlay(QRectF(0, 0, 100, 100), grid_size=50, grid_subdivisions=5)
+        overlay = CropOverlay(QRectF(0, 0, 100, 100), grid_divisions=3)
         self.assertEqual(overlay.handle_at(QPointF(0, 0), 5), "nw")
         self.assertIsNone(overlay.handle_at(QPointF(50, 50), 5))
         self.assertTrue(overlay.contains(QPointF(50, 50)))

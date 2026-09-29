@@ -24,6 +24,7 @@ class CoverScene(QGraphicsScene):
         self.bleed_margin = 0
         self.safe_margin = 0
         self.alignment_guides: list[tuple[str, int]] = []
+        self.crop_overlay = None
 
     def drawForeground(self, painter: QPainter, rect: QRectF) -> None:
         super().drawForeground(painter, rect)
@@ -98,6 +99,8 @@ class CoverScene(QGraphicsScene):
                 painter.drawLine(QPointF(position, rect.top()), QPointF(position, rect.bottom()))
             else:
                 painter.drawLine(QPointF(rect.left(), position), QPointF(rect.right(), position))
+        if self.crop_overlay is not None:
+            self.crop_overlay.paint(painter)
 
     def _draw_print_guides(self, painter: QPainter) -> None:
         canvas = QRectF(0, 0, self.canvas_width, self.canvas_height)
