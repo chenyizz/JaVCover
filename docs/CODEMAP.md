@@ -38,6 +38,7 @@ JAVCover/
 │       ├── flow_layout.py      # FlowLayout（工具面板自动折行）
 │       ├── image_edit.py       # ImageEditDialog（平移/裁剪专用编辑窗口）
 │       ├── main_window.py      # MainWindow（菜单、面板、项目读写、批量等）
+│       ├── panel.py            # PanelDock / PanelTitleBar（统一卡片模板）
 │       ├── scrub.py            # ScrubSpinBox（可拖动改值）
 │       ├── widgets.py          # _ToolButtonFeedback / _WindowControlButton / _DelayedToolTip
 │       └── worker.py           # _BackgroundWorker（QThread，可取消）
@@ -113,6 +114,7 @@ tests/
 - `ui/scrub.py`：`ScrubSpinBox`（拖动框体改值的数字框，供不透明度/网格/尺寸等复用）。
 - `ui/image_edit.py`：`ImageEditDialog`——双击区域/图层打开，平移图片、可拖边/角裁剪（框外虚化 + 对齐网格），Enter 应用。`_Preview` 负责绘制与交互。
 - `ui/flow_layout.py`：`FlowLayout`——按宽度自动折行的布局，用于工具面板（窄时单列、拉宽时多列）。
+- `ui/panel.py`：`PanelDock` / `PanelTitleBar`——**所有卡片（工具/区域/参考线/图层）的统一模板**：始终保留 `windowTitle`（供标签页与“视图”菜单显示名称）、紧凑标题栏只显示名称（无 x/口 按钮）、`Movable|Floatable` 且可停靠任意区域；工具面板是本模板的“内容为流式工具按钮”的子集。`_new_inspector_card` 与 `_create_tool_rail` 都基于它，避免各面板被反复单独打补丁。
 - `ui/main_window.py`：`MainWindow`（下列符号除特别注明外均在此文件）。
 - `app.py`：仅保留 `main()`、`_startup_path()` 并再导出 `MainWindow`/`CoverView`/`CoverScene`/`RegionItem`/`DesignElementItem`/`PreferencesDialog`/`TextElementDialog`/`format_output_name` 以兼容旧导入。
 

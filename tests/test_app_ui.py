@@ -159,12 +159,16 @@ class MainWindowStyleTests(unittest.TestCase):
                 )
                 self.assertTrue(
                     window.region_dock.features()
-                    & QDockWidget.DockWidgetFeature.DockWidgetFloatable
+                    & QDockWidget.DockWidgetFeature.DockWidgetMovable
                 )
                 self.assertTrue(
                     window.region_dock.features()
-                    & QDockWidget.DockWidgetFeature.DockWidgetMovable
+                    & QDockWidget.DockWidgetFeature.DockWidgetFloatable
                 )
+                self.assertEqual(window.region_dock.windowTitle(), "区域")
+                self.assertEqual(window.guide_dock.windowTitle(), "参考线")
+                self.assertEqual(window.element_dock.windowTitle(), "图层")
+                self.assertIsNotNone(window.region_dock.titleBarWidget())
                 animated_buttons = [
                     button
                     for button in window.findChildren(QToolButton)
@@ -1152,6 +1156,46 @@ class MainWindowStyleTests(unittest.TestCase):
             self.assertEqual(rect, QRectF(5, 5, 10, 10))
         finally:
             dialog.close()
+
+    def test_panel_template_names_and_features(self) -> None:
+        from javcover.ui.panel import PanelTitleBar
+
+        with tempfile.TemporaryDirectory() as directory:
+            window = MainWindow(
+                settings=QSettings(
+                    str(Path(directory) / "ui.ini"), QSettings.Format.IniFormat
+                )
+            )
+            window.show()
+            self.app.processEvents()
+            try:
+                for dock in (
+                    window.tool_rail,
+                    window.region_dock,
+                    window.guide_dock,
+                    window.element_dock,
+                ):
+                    self.assertTrue(dock.windowTitle())
+                    self.assertIsInstance(dock.titleBarWidget(), PanelTitleBar)
+                    self.assertEqual(
+                        dock.titleBarWidget().label.text(), dock.windowTitle()
+                    )
+                    self.assertTrue(
+                        dock.features()
+                        & QDockWidget.DockWidgetFeature.DockWidgetMovable
+                    )
+                    self.assertTrue(
+                        dock.features()
+                        & QDockWidget.DockWidgetFeature.DockWidgetFloatable
+                    )
+                # Tabbed docks keep their names (used by the tab bar).
+                window.tabifyDockWidget(window.guide_dock, window.element_dock)
+                self.app.processEvents()
+                self.assertEqual(window.guide_dock.windowTitle(), "参考线")
+                self.assertEqual(window.element_dock.windowTitle(), "图层")
+            finally:
+                window.dirty = False
+                window.close()
 
     def test_grid_spin_buttons_step_and_respect_one_minimum(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -130,6 +130,7 @@ from javcover.ui.canvas import CoverScene, CoverView, DesignElementItem, RegionI
 from javcover.ui.dialogs import NewCanvasDialog, PreferencesDialog, TextElementDialog
 from javcover.ui.flow_layout import FlowLayout
 from javcover.ui.image_edit import ImageEditDialog
+from javcover.ui.panel import PanelDock
 from javcover.ui.widgets import (
     _DelayedToolTip,
     _ToolButtonFeedback,
@@ -196,8 +197,9 @@ class MainWindow(QMainWindow):
             QToolBar#canvasToolRail QToolButton:checked:hover {
                 background: #c6dbff; border: 2px solid #1d4ed8; border-radius: 5px;
             }
-            QDockWidget::title { background: #e7ebee; padding: 5px 8px; border-bottom: 1px solid #d7dde2; }
-            #toolRailTitle { background: #e7ebee; border-bottom: 1px solid #d7dde2; }
+            QDockWidget::title { background: #e7ebee; padding: 4px 8px; border-bottom: 1px solid #d7dde2; }
+            #panelTitleBar { background: #eef1f4; border-bottom: 1px solid #dbe0e4; }
+            #panelTitleLabel { color: #526171; font-weight: 600; }
             QToolButton#toolCard { padding: 0px; border: 1px solid transparent; border-radius: 4px; }
             QFrame#inspectorCard { background: #ffffff; border: 1px solid #e1e5e9; border-radius: 6px; }
             QLabel#inspectorCardTitle { color: #526171; font-weight: 600; }
@@ -733,25 +735,10 @@ class MainWindow(QMainWindow):
         self._set_grid_visibility(self.grid_checkbox.isChecked())
 
     def _create_tool_rail(self) -> None:
-        dock = QDockWidget("工具", self)
-        dock.setObjectName("toolRailDock")
-        dock.setAllowedAreas(
-            Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
-        )
-        dock.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable
-            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
-            | QDockWidget.DockWidgetFeature.DockWidgetClosable
-        )
+        dock = PanelDock("工具", "toolRailDock", self)
         panel = QWidget(dock)
-        flow = FlowLayout(panel, margin=2, hspacing=2, vspacing=2)
+        flow = FlowLayout(panel, margin=5, hspacing=2, vspacing=2)
         dock.setWidget(panel)
-        # Slim, Photoshop-like title bar (keeps drag-to-move but not wide).
-        title = QWidget(dock)
-        title.setObjectName("toolRailTitle")
-        title.setFixedHeight(14)
-        title.setToolTip("工具（可拖动）")
-        dock.setTitleBarWidget(title)
         self.tool_rail = dock
         self.tool_rail_dock = dock
         self.tool_buttons: dict[str, QToolButton] = {}
@@ -923,15 +910,7 @@ class MainWindow(QMainWindow):
     def _new_inspector_card(
         self, title: str, object_name: str
     ) -> tuple[QDockWidget, QVBoxLayout, QSplitter]:
-        dock = QDockWidget(title, self)
-        dock.setObjectName(object_name)
-        dock.setMinimumWidth(250)
-        dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-        dock.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable
-            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
-            | QDockWidget.DockWidgetFeature.DockWidgetClosable
-        )
+        dock = PanelDock(title, object_name, self, minimum_width=250)
         splitter = QSplitter(Qt.Orientation.Vertical, dock)
         splitter.setObjectName(f"{title}CardSplitter")
         splitter.setHandleWidth(6)
