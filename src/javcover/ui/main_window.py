@@ -124,12 +124,7 @@ class MainWindow(
         self.setStyleSheet(self._base_style_sheet)
 
         self.view = CoverView()
-        pasteboard = QColor(
-            str(self.settings.value("canvas/pasteboardColor", "#e8ebee"))
-        )
-        if not pasteboard.isValid():
-            pasteboard = QColor("#e8ebee")
-        self.view.set_background_color(pasteboard)
+        self.load_pasteboard()
         self.view.set_project(self.project)
         self.view.regionSelected.connect(self._select_region)
         self.view.elementSelected.connect(self._select_element)

@@ -15,9 +15,9 @@ from javcover.core.crop import crop_image_to_rect
 from javcover.core.errors import ImageError
 from javcover.services.image_ops import decode_png, encode_png
 from javcover.core.models import Rect
+from javcover.ui.canvas.handles import draw_handles
 
 MIN_CROP = 2.0
-HANDLE_HALF_PX = 4.0
 HIT_TOLERANCE_PX = 9.0
 
 
@@ -154,20 +154,16 @@ class CropOverlay:
                 painter.drawLine(QPointF(x, crop.top()), QPointF(x, crop.bottom()))
                 painter.drawLine(QPointF(crop.left(), y), QPointF(crop.right(), y))
         # Border with a dark halo so it reads over any content.
-        halo = QPen(QColor(0, 0, 0, 170), 4)
+        halo = QPen(QColor(0, 0, 0, 160), 2.4)
         halo.setCosmetic(True)
         painter.setPen(halo)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(crop)
-        pen = QPen(QColor("#ffd400"), 2)
+        pen = QPen(QColor("#ffd400"), 1.4)
         pen.setCosmetic(True)
         painter.setPen(pen)
         painter.drawRect(crop)
-        half = HANDLE_HALF_PX / scale
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#ffd400"))
-        for point in self.handle_points().values():
-            painter.drawRect(QRectF(point.x() - half, point.y() - half, half * 2, half * 2))
+        draw_handles(painter, crop, scale, QColor("#ffd400"))
         painter.restore()
 
 

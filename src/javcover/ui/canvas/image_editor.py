@@ -1,30 +1,32 @@
-"""Reusable image-in-frame editor widget (wheel zoom, pan, crop with snapping).
+"""Reusable image-in-frame editor (QGraphicsView) with rulers, zoom, pan, crop.
 
-This replaces the old modal ``ImageEditDialog``: it is a plain widget that can
-live inside a tab next to the main canvas. It reuses the crop overlay
-(:class:`javcover.ui.canvas.crop.CropOverlay`) and the shared image mapping
-(:func:`javcover.core.crop.image_rect_mapping`); it never touches project data.
+Being a ``QGraphicsView`` lets it reuse :class:`javcover.services.canvas_widgets.RulerFrame`
+for pixel rulers and guide creation, matching the main cover canvas. It reuses
+the crop overlay and the shared image mapping; it never touches project data.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPen
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QGraphicsScene, QGraphicsView, QWidget
 
-from javcover.core.crop import image_rect_mapping
+from javcover.core.crop import crop_image_to_rect, image_rect_mapping
 from javcover.core.errors import ImageError
+from javcover.core.models import Guide
+from javcover.services.image_ops import encode_png
 from javcover.ui.canvas.crop import HIT_TOLERANCE_PX, CropOverlay
 
-_MARGIN = 24
 _MIN_ZOOM = 0.2
 _MAX_ZOOM = 12.0
 _SNAP_PX = 6.0
 
 
-class ImageEditor(QWidget):
+class ImageEditor(QGraphicsView):
     changed = Signal()
     zoomChanged = Signal(float)
+    pointerMoved = Signal(int, int)
+    viewportChanged = Signal()
 
     def __init__(
         self,
@@ -37,7 +39,8 @@ class ImageEditor(QWidget):
         allow_crop: bool = True,
         parent: QWidget | None = None,
     ) -> None:
-        super().__init__(parent)
+        self._scene = QGraphicsScene()
+        super().__init__(self._scene, parent)
         self.image = image
         self.frame_w = frame.width()
         self.frame_h = frame.height()
@@ -48,35 +51,51 @@ class ImageEditor(QWidget):
         self.mode = "pan" if allow_pan else "crop"
         self.grid_step = 50
         self.snap_enabled = True
-        self.zoom = 1.0
         self.crop_overlay = CropOverlay(QRectF(0, 0, self.frame_w, self.frame_h), 0)
-        self._scale = 1.0
-        self._origin = QPointF()
-        self._view_offset = QPointF()
+        self.guides: list[Guide] = []
+        self._base_scale = 1.0
+        self._fitted = False
         self._drag: str | None = None
         self._drag_start = QPointF()
         self._rect_start = QRectF()
         self._offset_start = (0, 0)
         self._pan_start = QPointF()
-        self._pan_origin = QPointF()
-        self.setMinimumSize(360, 300)
+        self._scroll_start = (0, 0)
+        self._scene.setSceneRect(0, 0, self.frame_w, self.frame_h)
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        self.setBackgroundBrush(QColor("#2b2f36"))
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setMouseTracking(True)
+        QTimer.singleShot(0, self.fit_to_window)
 
     # -- public state -----------------------------------------------------
     def set_mode(self, mode: str) -> None:
         self.mode = mode
         self._drag = None
-        self.update()
+        self.viewport().update()
+
+    def fit_to_window(self) -> None:
+        self.resetTransform()
+        self.fitInView(self._scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        self._base_scale = max(self.transform().m11(), 0.01)
+        self._fitted = True
+        self.zoomChanged.emit(1.0)
+        self.viewportChanged.emit()
 
     def set_zoom(self, zoom: float) -> None:
         zoom = min(max(zoom, _MIN_ZOOM), _MAX_ZOOM)
-        if abs(zoom - self.zoom) < 1e-6:
-            return
-        self.zoom = zoom
-        self._layout()
-        self.update()
+        self.resetTransform()
+        self.fitInView(self._scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        self._base_scale = max(self.transform().m11(), 0.01)
+        self.scale(zoom, zoom)
         self.zoomChanged.emit(zoom)
+        self.viewportChanged.emit()
+
+    def current_zoom(self) -> float:
+        return max(self.transform().m11(), 0.01) / max(self._base_scale, 0.01)
 
     def result_offset(self) -> tuple[int, int]:
         return (int(round(self.offset[0])), int(round(self.offset[1])))
@@ -84,46 +103,52 @@ class ImageEditor(QWidget):
     def crop_rect(self) -> QRectF:
         return QRectF(self.crop_overlay.rect)
 
-    # -- geometry ---------------------------------------------------------
-    def _layout(self) -> None:
-        available_w = max(1, self.width() - 2 * _MARGIN)
-        available_h = max(1, self.height() - 2 * _MARGIN)
-        fit_scale = min(available_w / self.frame_w, available_h / self.frame_h)
-        self._scale = max(fit_scale * self.zoom, 0.01)
-        origin_x = (self.width() - self.frame_w * self._scale) / 2 + self._view_offset.x()
-        origin_y = (self.height() - self.frame_h * self._scale) / 2 + self._view_offset.y()
-        self._origin = QPointF(origin_x, origin_y)
+    def add_guide(self, axis: str, position: int) -> None:
+        if axis not in ("x", "y"):
+            return
+        limit = self.frame_w if axis == "x" else self.frame_h
+        position = min(max(0, position), limit)
+        self.guides.append(Guide(axis, position))
+        self.viewport().update()
 
-    def _frame_rect(self) -> QRectF:
-        return QRectF(
-            self._origin.x(), self._origin.y(),
-            self.frame_w * self._scale, self.frame_h * self._scale,
-        )
+    def clear_guides(self) -> None:
+        self.guides.clear()
+        self.viewport().update()
 
-    def _to_frame(self, point: QPointF) -> QPointF:
-        return QPointF(
-            (point.x() - self._origin.x()) / self._scale,
-            (point.y() - self._origin.y()) / self._scale,
-        )
+    # -- events -----------------------------------------------------------
+    def resizeEvent(self, event: object) -> None:
+        super().resizeEvent(event)
+        if not self._fitted:
+            self.fit_to_window()
+        self.viewportChanged.emit()
 
-    # -- painting ---------------------------------------------------------
-    def paintEvent(self, _event: object) -> None:
-        self._layout()
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.fillRect(self.rect(), QColor("#2b2f36"))
-        frame = self._frame_rect()
-        painter.save()
-        painter.setClipRect(frame)
-        painter.fillRect(frame, QColor("#ffffff"))
-        painter.translate(frame.topLeft())
-        painter.scale(self._scale, self._scale)
+    def scrollContentsBy(self, dx: int, dy: int) -> None:
+        super().scrollContentsBy(dx, dy)
+        self.viewportChanged.emit()
+
+    def wheelEvent(self, event: object) -> None:
+        delta = event.angleDelta().y()
+        if delta == 0:
+            return
+        factor = 1.1 if delta > 0 else 1 / 1.1
+        current = self.current_zoom()
+        if not _MIN_ZOOM <= current * factor <= _MAX_ZOOM:
+            return
+        self.scale(factor, factor)
+        self.zoomChanged.emit(self.current_zoom())
+        self.viewportChanged.emit()
+
+    def drawBackground(self, painter: QPainter, rect: QRectF) -> None:
+        super().drawBackground(painter, rect)
         bounds = QRectF(0, 0, self.frame_w, self.frame_h)
+        painter.fillRect(bounds, QColor("#ffffff"))
         drawn, source = image_rect_mapping(
             self.image, bounds, self.fit, tuple(self.offset)
         )
+        painter.save()
+        painter.setClipRect(bounds)
         painter.drawImage(drawn, self.image, source)
-        if self.grid_step > 0 and self.grid_step * self._scale >= 5:
+        if self.grid_step > 0 and self.grid_step * self.transform().m11() >= 5:
             pen = QPen(QColor(30, 40, 55, 90), 1)
             pen.setCosmetic(True)
             painter.setPen(pen)
@@ -135,113 +160,123 @@ class ImageEditor(QWidget):
             while value < self.frame_h:
                 painter.drawLine(QPointF(0, value), QPointF(self.frame_w, value))
                 value += self.grid_step
+        painter.restore()
+
+    def drawForeground(self, painter: QPainter, rect: QRectF) -> None:
+        super().drawForeground(painter, rect)
         if self.mode == "crop" and self.allow_crop:
             self.crop_overlay.paint(painter)
-        painter.restore()
-        pen = QPen(QColor("#8a94a3"), 1)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(frame)
-        painter.end()
+        for guide in self.guides:
+            line = (
+                (guide.position, 0, guide.position, self.frame_h)
+                if guide.axis == "x"
+                else (0, guide.position, self.frame_w, guide.position)
+            )
+            pen = QPen(QColor("#00d9ff"), 0, Qt.PenStyle.DashLine)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            painter.drawLine(*line)
 
     # -- snapping ---------------------------------------------------------
     def _snap(self, rect: QRectF) -> QRectF:
         if not self.snap_enabled:
             return rect
-        tolerance = _SNAP_PX / self._scale
-        bounds = QRectF(0, 0, self.frame_w, self.frame_h)
+        tolerance = _SNAP_PX / max(self.transform().m11(), 0.1)
         x_targets = (0.0, self.frame_w / 2, float(self.frame_w))
         y_targets = (0.0, self.frame_h / 2, float(self.frame_h))
+        for guide in self.guides:
+            if guide.axis == "x":
+                x_targets += (float(guide.position),)
+            else:
+                y_targets += (float(guide.position),)
 
         def best(edges: tuple[float, ...], targets: tuple[float, ...]) -> float:
-            found = 0.0
-            distance = tolerance + 1
+            found, distance = 0.0, tolerance + 1
             for edge in edges:
                 for target in targets:
                     delta = target - edge
                     if abs(delta) <= tolerance and abs(delta) < distance:
-                        distance = abs(delta)
-                        found = delta
+                        distance, found = abs(delta), delta
                 if self.grid_step > 0:
                     target = round(edge / self.grid_step) * self.grid_step
                     delta = target - edge
                     if abs(delta) <= tolerance and abs(delta) < distance:
-                        distance = abs(delta)
-                        found = delta
+                        distance, found = abs(delta), delta
             return found
 
         dx = best((rect.left(), rect.center().x(), rect.right()), x_targets)
         dy = best((rect.top(), rect.center().y(), rect.bottom()), y_targets)
         return QRectF(
             rect.x() + dx, rect.y() + dy, rect.width(), rect.height()
-        ).intersected(bounds)
+        ).intersected(QRectF(0, 0, self.frame_w, self.frame_h))
 
-    # -- pointer interaction ---------------------------------------------
+    # -- pointer ----------------------------------------------------------
     def mousePressEvent(self, event: object) -> None:
-        self._layout()
-        button = event.button()
-        position = event.position()
-        if button in (Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton):
+        if event.button() in (Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton):
             self._drag = "pan"
-            self._pan_start = position
-            self._pan_origin = QPointF(self._view_offset)
+            self._pan_start = event.position().toPoint()
+            self._scroll_start = (
+                self.horizontalScrollBar().value(),
+                self.verticalScrollBar().value(),
+            )
             event.accept()
             return
-        if button != Qt.MouseButton.LeftButton:
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
             return
-        frame_point = self._to_frame(position)
+        point = self.mapToScene(event.position().toPoint())
         if self.mode == "crop" and self.allow_crop:
-            tolerance = HIT_TOLERANCE_PX / self._scale
-            handle = self.crop_overlay.handle_at(frame_point, tolerance)
+            tolerance = HIT_TOLERANCE_PX / max(self.transform().m11(), 0.01)
+            handle = self.crop_overlay.handle_at(point, tolerance)
             if handle is not None:
                 self._drag = handle
                 self._rect_start = QRectF(self.crop_overlay.rect)
-            elif self.crop_overlay.contains(frame_point):
+            elif self.crop_overlay.contains(point):
                 self._drag = "move"
                 self._rect_start = QRectF(self.crop_overlay.rect)
             else:
                 self._drag = "new"
-                self._rect_start = QRectF(frame_point, frame_point)
-            self._drag_start = frame_point
+                self._rect_start = QRectF(point, point)
+            self._drag_start = point
         elif self.allow_pan:
             self._drag = "image"
-            self._drag_start = frame_point
+            self._drag_start = point
             self._offset_start = (self.offset[0], self.offset[1])
         event.accept()
 
     def mouseMoveEvent(self, event: object) -> None:
+        point = self.mapToScene(event.position().toPoint())
+        self.pointerMoved.emit(round(point.x()), round(point.y()))
         if self._drag is None:
             return
-        position = event.position()
         if self._drag == "pan":
-            self._view_offset = self._pan_origin + (position - self._pan_start)
-            self.update()
+            delta = event.position().toPoint() - self._pan_start
+            self.horizontalScrollBar().setValue(self._scroll_start[0] - delta.x())
+            self.verticalScrollBar().setValue(self._scroll_start[1] - delta.y())
             return
-        frame_point = self._to_frame(position)
         if self._drag == "image":
             self.offset = [
-                self._offset_start[0] + (frame_point.x() - self._drag_start.x()),
-                self._offset_start[1] + (frame_point.y() - self._drag_start.y()),
+                self._offset_start[0] + (point.x() - self._drag_start.x()),
+                self._offset_start[1] + (point.y() - self._drag_start.y()),
             ]
-            self.update()
+            self.viewport().update()
             self.changed.emit()
             return
         modifiers = event.modifiers()
         if self._drag == "new":
-            rect = QRectF(self._drag_start, frame_point).normalized()
+            rect = QRectF(self._drag_start, point).normalized()
         elif self._drag == "move":
-            delta = frame_point - self._drag_start
-            rect = self._rect_start.translated(delta)
+            rect = self._rect_start.translated(point - self._drag_start)
         else:
             rect = self.crop_overlay.resized(
                 self._rect_start,
                 self._drag,
-                frame_point,
+                point,
                 keep_aspect=bool(modifiers & Qt.KeyboardModifier.ShiftModifier),
                 from_center=bool(modifiers & Qt.KeyboardModifier.AltModifier),
             )
         self.crop_overlay.set_crop(self._snap(rect))
-        self.update()
+        self.viewport().update()
         self.changed.emit()
 
     def mouseReleaseEvent(self, event: object) -> None:
@@ -252,34 +287,13 @@ class ImageEditor(QWidget):
         ):
             self._drag = None
 
-    def wheelEvent(self, event: object) -> None:
-        if event.angleDelta().y() == 0:
-            return
-        self._layout()
-        position = event.position()
-        before = self._to_frame(position)
-        factor = 1.1 if event.angleDelta().y() > 0 else 1 / 1.1
-        self.set_zoom(self.zoom * factor)
-        after = self._frame_rect()
-        widget_after = QPointF(
-            after.x() + before.x() * self._scale, after.y() + before.y() * self._scale
-        )
-        self._view_offset += position - widget_after
-        self._layout()
-        self.update()
-        event.accept()
-
     def crop_result(self) -> tuple[bytes, QRectF] | None:
-        """Return cropped PNG + new frame rect when the crop is smaller."""
         if not self.allow_crop:
             return None
         frame = QRectF(0, 0, self.frame_w, self.frame_h)
         crop = self.crop_overlay.rect.intersected(frame)
         if crop == frame or crop.width() < 1 or crop.height() < 1:
             return None
-        from javcover.core.crop import crop_image_to_rect
-        from javcover.services.image_ops import encode_png
-
         try:
             sub, rect = crop_image_to_rect(
                 self.image, frame, self.fit, crop, tuple(self.offset)

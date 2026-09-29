@@ -97,6 +97,24 @@ class PreferencesDialog(QDialog):
         self.pasteboard_color_button.clicked.connect(self._choose_pasteboard_color)
         color_layout.addWidget(self.pasteboard_color_button)
         general_form.addRow("画布外围颜色", color_row)
+        image_row = QWidget(general_tab)
+        image_layout = QHBoxLayout(image_row)
+        image_layout.setContentsMargins(0, 0, 0, 0)
+        self.pasteboard_image = QLineEdit(str(preferences["canvas/pasteboardImage"]))
+        self.pasteboard_image.setPlaceholderText("可选：画布外围背景图片")
+        browse_image = QPushButton("浏览…")
+        clear_image = QPushButton("清除")
+        browse_image.clicked.connect(self._choose_pasteboard_image)
+        clear_image.clicked.connect(lambda: self.pasteboard_image.clear())
+        image_layout.addWidget(self.pasteboard_image)
+        image_layout.addWidget(browse_image)
+        image_layout.addWidget(clear_image)
+        general_form.addRow("画布外围图片", image_row)
+        self.pasteboard_opacity = ScrubSpinBox()
+        self.pasteboard_opacity.setRange(0, 100)
+        self.pasteboard_opacity.setSuffix(" %")
+        self.pasteboard_opacity.setValue(int(preferences["canvas/pasteboardOpacity"]))
+        general_form.addRow("画布外围不透明度", self.pasteboard_opacity)
         self.jpeg_quality = ScrubSpinBox()
         self.jpeg_quality.setRange(1, 100)
         self.jpeg_quality.setSuffix(" %")
@@ -175,6 +193,8 @@ class PreferencesDialog(QDialog):
             "canvas/defaultWidth": self.canvas_width.value(),
             "canvas/defaultHeight": self.canvas_height.value(),
             "canvas/pasteboardColor": self.pasteboard_color,
+            "canvas/pasteboardImage": self.pasteboard_image.text().strip(),
+            "canvas/pasteboardOpacity": self.pasteboard_opacity.value(),
             "export/jpegQuality": self.jpeg_quality.value(),
             "recovery/directory": self.recovery_dir.text().strip(),
             "export/iccProfile": self.icc_profile.text().strip(),
@@ -217,6 +237,16 @@ class PreferencesDialog(QDialog):
     def _reset_shortcuts(self) -> None:
         for shortcut_id, (_label, _action, default) in self.shortcuts.items():
             self._shortcut_edits[shortcut_id].setKeySequence(default)
+
+    def _choose_pasteboard_image(self) -> None:
+        chosen, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择画布外围背景图片",
+            self.pasteboard_image.text(),
+            "图片 (*.png *.jpg *.jpeg *.bmp *.webp);;所有文件 (*)",
+        )
+        if chosen:
+            self.pasteboard_image.setText(chosen)
 
     def _choose_pasteboard_color(self) -> None:
         color = QColorDialog.getColor(

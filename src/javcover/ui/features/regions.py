@@ -63,6 +63,9 @@ class RegionPanelMixin:
         self.replace_background_button = QPushButton("替换所选区背景…")
         self.replace_background_button.clicked.connect(self.replace_region_background)
         layout.addWidget(self.replace_background_button)
+        self.clear_background_button = QPushButton("清除所选区背景")
+        self.clear_background_button.clicked.connect(self.clear_region_background)
+        layout.addWidget(self.clear_background_button)
         self.remove_region_button = QPushButton("删除所选区域")
         self.remove_region_button.clicked.connect(self.remove_selected_region)
         layout.addWidget(self.remove_region_button)
@@ -160,6 +163,7 @@ class RegionPanelMixin:
         editable = enabled and region is not None and not region.locked
         self.region_name.setEnabled(editable)
         self.replace_background_button.setEnabled(editable)
+        self.clear_background_button.setEnabled(editable)
         self.remove_region_button.setEnabled(editable)
         self.duplicate_region_button.setEnabled(enabled)
         self.region_fit.setEnabled(editable)
@@ -336,6 +340,17 @@ class RegionPanelMixin:
             return
         self._begin_edit()
         region.background_png = encoded
+        self.view.refresh_overlays()
+        self._finish_edit()
+
+    def clear_region_background(self) -> None:
+        region = self._selected_region()
+        if region is None or region.locked or not region.background_png:
+            return
+        self._begin_edit()
+        region.background_png = None
+        region.bg_dx = 0
+        region.bg_dy = 0
         self.view.refresh_overlays()
         self._finish_edit()
 

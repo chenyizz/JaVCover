@@ -25,8 +25,21 @@ class EditingMixin:
             0, QTabBar.ButtonPosition.RightSide, None
         )
         self.tabs.tabCloseRequested.connect(self._on_tab_close_requested)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         self._editor_tabs: dict[tuple[str, str], EditorTab] = {}
         return self.tabs
+
+    def _on_tab_changed(self, index: int) -> None:
+        widget = self.tabs.widget(index)
+        if widget is None or index == 0:
+            return
+        for (kind, target_id), tab in self._editor_tabs.items():
+            if tab is widget:
+                if kind == "element":
+                    self.view.select_element(target_id)
+                else:
+                    self.view.select_region(target_id)
+                return
 
     def _on_tab_close_requested(self, index: int) -> None:
         widget = self.tabs.widget(index)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsLineItem, QGraphicsRectItem, QGraphicsView
 from javcover.core.constants import IMAGE_SUFFIXES
 from javcover.core.errors import ImageError
@@ -67,6 +67,8 @@ class CoverView(QGraphicsView):
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         self.setBackgroundBrush(QColor("#e8ebee"))
+        self._pasteboard_image: QImage | None = None
+        self._pasteboard_opacity = 100
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
@@ -79,6 +81,29 @@ class CoverView(QGraphicsView):
     def set_background_color(self, color: QColor) -> None:
         if color.isValid():
             self.setBackgroundBrush(color)
+
+    def set_background_image(self, image: QImage | None, opacity: int = 100) -> None:
+        self._pasteboard_image = image if image is not None and not image.isNull() else None
+        self._pasteboard_opacity = min(max(0, opacity), 100)
+        self.viewport().update()
+
+    def drawBackground(self, painter: QPainter, rect: QRectF) -> None:
+        super().drawBackground(painter, rect)
+        image = self._pasteboard_image
+        if image is None or image.isNull() or rect.isEmpty():
+            return
+        painter.save()
+        if self._pasteboard_opacity < 100:
+            painter.setOpacity(self._pasteboard_opacity / 100)
+        scale = max(rect.width() / image.width(), rect.height() / image.height())
+        source = QRectF(
+            (image.width() - rect.width() / scale) / 2,
+            (image.height() - rect.height() / scale) / 2,
+            rect.width() / scale,
+            rect.height() / scale,
+        )
+        painter.drawImage(rect, image, source)
+        painter.restore()
 
     def set_project(self, project: Project, preserve_view: bool = False) -> None:
         self.cancel_crop()

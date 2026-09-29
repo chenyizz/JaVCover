@@ -9,6 +9,27 @@ from javcover.core.models import Guide
 
 
 
+def _draw_guide_label(painter: QPainter, visible: QRectF, guide: Guide) -> None:
+    transform = painter.worldTransform()
+    if guide.axis == "x":
+        anchor = transform.map(QPointF(guide.position, visible.top()))
+    else:
+        anchor = transform.map(QPointF(visible.left(), guide.position))
+    painter.save()
+    painter.resetTransform()
+    metrics = painter.fontMetrics()
+    text = guide.name
+    width = metrics.horizontalAdvance(text) + 6
+    height = metrics.height() + 2
+    rect = QRectF(anchor.x() + 3, anchor.y() + 3, width, height)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(0, 0, 0, 150))
+    painter.drawRect(rect)
+    painter.setPen(QColor("#ffffff"))
+    painter.drawText(rect.adjusted(3, 0, -3, 0), Qt.AlignmentFlag.AlignVCenter, text)
+    painter.restore()
+
+
 class CoverScene(QGraphicsScene):
     def __init__(self) -> None:
         super().__init__()
@@ -137,6 +158,8 @@ class CoverScene(QGraphicsScene):
         painter.drawLine(*line)
         painter.setPen(QPen(color, 0, Qt.PenStyle.DashLine))
         painter.drawLine(*line)
+        if guide.name:
+            _draw_guide_label(painter, visible, guide)
 
     @staticmethod
     def _draw_grid_lines(

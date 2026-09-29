@@ -1237,11 +1237,11 @@ class MainWindowStyleTests(unittest.TestCase):
         )
         try:
             editor.set_zoom(2.0)
-            self.assertAlmostEqual(editor.zoom, 2.0)
+            self.assertAlmostEqual(editor.current_zoom(), 2.0)
             editor.set_zoom(1000.0)
-            self.assertLessEqual(editor.zoom, 12.0)
+            self.assertLessEqual(editor.current_zoom(), 12.0)
             editor.set_zoom(0.001)
-            self.assertGreaterEqual(editor.zoom, 0.2)
+            self.assertGreaterEqual(editor.current_zoom(), 0.2)
             editor.set_zoom(1.0)
             editor.grid_step = 10
             editor.snap_enabled = True

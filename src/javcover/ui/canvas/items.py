@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPen
 from PySide6.QtWidgets import QGraphicsRectItem, QWidget
 from javcover.services.image_ops import composition_mode, decode_png, paint_region_background, paint_text_element
 from javcover.core.models import DesignElement, Region
+from javcover.ui.canvas.handles import draw_handles
 
 
 
@@ -53,9 +54,9 @@ class RegionItem(QGraphicsRectItem):
             )
 
         color = QColor("#ffd400") if self.selected else QColor("#ff3b30")
-        line_width = 3.0 if self.selected else 2.0
+        line_width = 1.6 if self.selected else 1.2
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        halo = QPen(QColor(0, 0, 0, 170), line_width + 2)
+        halo = QPen(QColor(0, 0, 0, 150), line_width + 1.0)
         halo.setCosmetic(True)
         painter.setPen(halo)
         painter.drawRect(bounds)
@@ -63,7 +64,7 @@ class RegionItem(QGraphicsRectItem):
         border.setCosmetic(True)
         painter.setPen(border)
         if self.selected:
-            painter.setBrush(QColor(255, 212, 0, 45))
+            painter.setBrush(QColor(255, 212, 0, 40))
             painter.drawRect(bounds)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(border)
@@ -88,19 +89,7 @@ class RegionItem(QGraphicsRectItem):
             )
             painter.restore()
         if self.selected and not self.locked:
-            painter.setBrush(color)
-            half = 3.5 / max(painter.worldTransform().m11(), 0.01)
-            for point in (
-                bounds.topLeft(),
-                QPointF(bounds.center().x(), bounds.top()),
-                bounds.topRight(),
-                QPointF(bounds.right(), bounds.center().y()),
-                bounds.bottomRight(),
-                QPointF(bounds.center().x(), bounds.bottom()),
-                bounds.bottomLeft(),
-                QPointF(bounds.left(), bounds.center().y()),
-            ):
-                painter.drawRect(QRectF(point.x() - half, point.y() - half, half * 2, half * 2))
+            draw_handles(painter, bounds, painter.worldTransform().m11(), color)
 
 
 class DesignElementItem(QGraphicsRectItem):
@@ -131,28 +120,17 @@ class DesignElementItem(QGraphicsRectItem):
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         if self.selected:
             color = "#9aa6b2" if self.element.locked else "#00e0ff"
-            halo = QPen(QColor(0, 0, 0, 170), 5)
+            halo = QPen(QColor(0, 0, 0, 150), 2.4)
             halo.setCosmetic(True)
             painter.setPen(halo)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(bounds)
-            border = QPen(QColor(color), 3, Qt.PenStyle.SolidLine)
+            border = QPen(QColor(color), 1.6, Qt.PenStyle.SolidLine)
             border.setCosmetic(True)
             painter.setPen(border)
             painter.drawRect(bounds)
             if self.element.locked:
                 return
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor("#00e0ff"))
-            half = 3.5 / max(painter.worldTransform().m11(), 0.01)
-            for point in (
-                bounds.topLeft(),
-                QPointF(bounds.center().x(), bounds.top()),
-                bounds.topRight(),
-                QPointF(bounds.right(), bounds.center().y()),
-                bounds.bottomRight(),
-                QPointF(bounds.center().x(), bounds.bottom()),
-                bounds.bottomLeft(),
-                QPointF(bounds.left(), bounds.center().y()),
-            ):
-                painter.drawRect(QRectF(point.x() - half, point.y() - half, half * 2, half * 2))
+            draw_handles(
+                painter, bounds, painter.worldTransform().m11(), QColor("#00e0ff")
+            )

@@ -10,6 +10,8 @@ from javcover.ui.widgets.flow_layout import FlowLayout
 from javcover.ui.widgets.panel import PanelDock
 from javcover.ui.widgets.scrub import ScrubSpinBox
 from javcover.ui.widgets.controls import _DelayedToolTip, _ToolButtonFeedback
+from javcover.services.image_ops import load_image
+from javcover.core.errors import ImageError
 from pathlib import Path
 
 
@@ -57,6 +59,12 @@ class PreferencesMixin:
                 "canvas/defaultHeight", 800, 1, 100_000
             ),
             "canvas/pasteboardColor": self.view.backgroundBrush().color().name(),
+            "canvas/pasteboardImage": str(
+                self.settings.value("canvas/pasteboardImage", "") or ""
+            ),
+            "canvas/pasteboardOpacity": self._setting_int(
+                "canvas/pasteboardOpacity", 100, 0, 100
+            ),
             "export/jpegQuality": self._setting_int("export/jpegQuality", 95, 1, 100),
             "recovery/directory": str(self.settings.value("recovery/directory", "") or ""),
             "export/iccProfile": str(self.settings.value("export/iccProfile", "") or ""),
@@ -86,7 +94,22 @@ class PreferencesMixin:
         color = QColor(str(preferences["canvas/pasteboardColor"]))
         if color.isValid():
             self._apply_pasteboard_color(color)
+        self.load_pasteboard()
         self._update_recovery_path()
+
+    def load_pasteboard(self) -> None:
+        color = QColor(str(self.settings.value("canvas/pasteboardColor", "#e8ebee")))
+        if color.isValid():
+            self.view.set_background_color(color)
+        opacity = self._setting_int("canvas/pasteboardOpacity", 100, 0, 100)
+        path = str(self.settings.value("canvas/pasteboardImage", "") or "")
+        image = None
+        if path:
+            try:
+                image = load_image(path)
+            except (ImageError, OSError):
+                image = None
+        self.view.set_background_image(image, opacity)
 
     def _update_recovery_path(self) -> None:
         custom = str(self.settings.value("recovery/directory", "") or "").strip()
