@@ -1,9 +1,4 @@
-"""JAVCover entry point.
-
-The implementation is split across :mod:`javcover.ui` and the service modules;
-this module keeps :func:`main` and re-exports the public names for compatibility
-(``python -m javcover.app``, tests, and the frozen launcher).
-"""
+"""JAVCover application entry point (``python -m javcover.app``)."""
 
 from __future__ import annotations
 
@@ -16,19 +11,9 @@ if __package__ in (None, ""):
 from PySide6.QtCore import QLibraryInfo, QTimer, QTranslator
 from PySide6.QtWidgets import QApplication
 
-from javcover.constants import (  # noqa: F401
-    IMAGE_SUFFIXES,
-    _BLEND_MODE_LABELS,
-    format_output_name,
-)
-from javcover.ui.canvas import (  # noqa: F401
-    CoverScene,
-    CoverView,
-    DesignElementItem,
-    RegionItem,
-)
-from javcover.ui.dialogs import PreferencesDialog, TextElementDialog  # noqa: F401
-from javcover.ui.main_window import MainWindow  # noqa: F401
+from javcover.core.constants import IMAGE_SUFFIXES
+from javcover.ui.main_window import MainWindow
+
 
 def _startup_path(argv: list[str]) -> Path | None:
     for argument in argv[1:]:

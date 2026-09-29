@@ -7,7 +7,7 @@ from typing import Callable
 
 from PySide6.QtCore import QObject, QThread, Signal
 
-from javcover.tasks import TaskCancelled
+from javcover.core.tasks import TaskCancelled
 
 
 class _BackgroundWorker(QThread):

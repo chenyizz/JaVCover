@@ -8,9 +8,11 @@ from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from javcover.app import CoverScene, CoverView, DesignElementItem, RegionItem
-from javcover.models import DesignElement, Guide, Project, Rect, Region
-from javcover.image_ops import encode_png
+from javcover.ui.canvas.items import DesignElementItem, RegionItem
+from javcover.ui.canvas.scene import CoverScene
+from javcover.ui.canvas.view import CoverView
+from javcover.core.models import DesignElement, Guide, Project, Rect, Region
+from javcover.services.image_ops import encode_png
 
 
 class CanvasInteractionTests(unittest.TestCase):
@@ -335,7 +337,7 @@ class CanvasInteractionTests(unittest.TestCase):
         self.assertIn("y", [axis for axis, _ in guides])
 
     def test_crop_element_reduces_image_and_rect(self) -> None:
-        from javcover.image_ops import decode_png
+        from javcover.services.image_ops import decode_png
 
         image = QImage(40, 20, QImage.Format.Format_ARGB32)
         image.fill(QColor("#336699"))
@@ -355,6 +357,50 @@ class CanvasInteractionTests(unittest.TestCase):
         self.assertEqual(element.rect, Rect(20, 15, 10, 10))
         self.assertEqual(decode_png(element.png).width(), 10)
         self.assertEqual(decode_png(element.png).height(), 10)
+
+    def test_crop_overlay_geometry(self) -> None:
+        from javcover.ui.canvas.crop import CropOverlay
+
+        overlay = CropOverlay(QRectF(0, 0, 100, 100), grid_size=50, grid_subdivisions=5)
+        self.assertEqual(overlay.handle_at(QPointF(0, 0), 5), "nw")
+        self.assertIsNone(overlay.handle_at(QPointF(50, 50), 5))
+        self.assertTrue(overlay.contains(QPointF(50, 50)))
+        clamped = overlay.clamped(QRectF(10, 10, 100, 100).translated(QPointF(50, 50)))
+        self.assertEqual(clamped, QRectF(0, 0, 100, 100))
+        resized = overlay.resized(
+            QRectF(10, 10, 40, 20), "se", QPointF(100, 100), keep_aspect=True
+        )
+        self.assertAlmostEqual(resized.width() / resized.height(), 2.0, places=1)
+
+    def test_canvas_crop_apply_and_cancel_flow(self) -> None:
+        image = QImage(40, 20, QImage.Format.Format_ARGB32)
+        image.fill(QColor("#336699"))
+        element = DesignElement(
+            kind="image",
+            x=10,
+            y=10,
+            width=40,
+            height=20,
+            name="e",
+            png=encode_png(image),
+        )
+        self.project.elements.append(element)
+        self.view.refresh_overlays()
+        self.view.crop_mode = True
+        self.assertTrue(self.view.start_crop_at(QPointF(30, 20)))
+        self.assertIsNotNone(self.view.crop_overlay)
+        self.view.crop_overlay.set_crop(QRectF(20, 15, 10, 10))
+        # Preview only: no document change until apply.
+        self.assertEqual(element.rect, Rect(10, 10, 40, 20))
+        self.view.cancel_crop()
+        self.assertIsNone(self.view.crop_overlay)
+        self.assertEqual(element.rect, Rect(10, 10, 40, 20))
+
+        self.assertTrue(self.view.start_crop_at(QPointF(30, 20)))
+        self.view.crop_overlay.set_crop(QRectF(20, 15, 10, 10))
+        self.view.apply_crop()
+        self.assertIsNone(self.view.crop_overlay)
+        self.assertEqual(element.rect, Rect(20, 15, 10, 10))
 
     def test_grid_is_rendered_above_base_image(self) -> None:
         scene = CoverScene()

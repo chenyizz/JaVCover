@@ -7,9 +7,9 @@ from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from javcover.app import CoverView
-from javcover.canvas_widgets import RulerFrame
-from javcover.models import Project
+from javcover.ui.canvas.view import CoverView
+from javcover.services.canvas_widgets import RulerFrame
+from javcover.core.models import Project
 
 
 class RulerInteractionTests(unittest.TestCase):

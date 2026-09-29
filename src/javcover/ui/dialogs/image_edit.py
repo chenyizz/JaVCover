@@ -7,27 +7,23 @@ alignment grid. Enter applies, Esc cancels.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPen
-from PySide6.QtWidgets import (
-    QComboBox,
-    QDialog,
-    QDialogButtonBox,
-    QFormLayout,
-    QHBoxLayout,
-    QLabel,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from javcover.image_ops import crop_image_to_rect, image_rect_mapping
-from javcover.ui.scrub import ScrubSpinBox
+from javcover.core.crop import crop_image_to_rect, image_rect_mapping
+from javcover.services.image_ops import encode_png
+from javcover.ui.widgets.scrub import ScrubSpinBox
 
 _HANDLE = 5
 _MARGIN = 24
+_MIN_ZOOM = 0.2
+_MAX_ZOOM = 12.0
 
 
 class _Preview(QWidget):
+    zoomChanged = Signal(float)
+
     def __init__(
         self,
         image: QImage,
@@ -52,6 +48,7 @@ class _Preview(QWidget):
         self._offset_start = (0, 0)
         self._scale = 1.0
         self._origin = QPointF()
+        self.zoom = 1.0
         self.setMinimumSize(360, 300)
         self.setMouseTracking(True)
 
@@ -59,10 +56,29 @@ class _Preview(QWidget):
     def _layout(self) -> None:
         available_w = max(1, self.width() - 2 * _MARGIN)
         available_h = max(1, self.height() - 2 * _MARGIN)
-        self._scale = min(available_w / self.frame_w, available_h / self.frame_h)
+        fit_scale = min(available_w / self.frame_w, available_h / self.frame_h)
+        self._scale = fit_scale * self.zoom
         origin_x = (self.width() - self.frame_w * self._scale) / 2
         origin_y = (self.height() - self.frame_h * self._scale) / 2
         self._origin = QPointF(origin_x, origin_y)
+
+    def resizeEvent(self, _event: object) -> None:
+        self._layout()
+        self.update()
+
+    def wheelEvent(self, event: object) -> None:
+        factor = 1.1 if event.angleDelta().y() > 0 else 1 / 1.1
+        self.set_zoom(self.zoom * factor)
+        event.accept()
+
+    def set_zoom(self, zoom: float) -> None:
+        zoom = min(max(zoom, _MIN_ZOOM), _MAX_ZOOM)
+        if abs(zoom - self.zoom) < 1e-6:
+            return
+        self.zoom = zoom
+        self._layout()
+        self.update()
+        self.zoomChanged.emit(zoom)
 
     def _frame_rect(self) -> QRectF:
         return QRectF(
@@ -266,11 +282,17 @@ class ImageEditDialog(QDialog):
         controls.addWidget(QLabel("分格"))
         controls.addWidget(self.grid_subdivisions)
         controls.addStretch(1)
+        controls.addWidget(QLabel("缩放"))
+        self.zoom_label = QLabel("100%")
+        controls.addWidget(self.zoom_label)
+        fit_button = QPushButton("适应")
+        fit_button.clicked.connect(lambda: self.preview.set_zoom(1.0))
+        controls.addWidget(fit_button)
         layout.addLayout(controls)
 
         self.preview = _Preview(image, frame, fit, offset, self)
         layout.addWidget(self.preview, 1)
-        hint = QLabel("拖动调整；裁剪模式下可拖边/角改大小；Enter 应用，Esc 取消。")
+        hint = QLabel("滚轮缩放；拖动调整；裁剪模式下可拖边/角改大小；Enter 应用，Esc 取消。")
         hint.setWordWrap(True)
         layout.addWidget(hint)
         buttons = QDialogButtonBox(
@@ -286,6 +308,9 @@ class ImageEditDialog(QDialog):
         self.grid_size.valueChanged.connect(self._grid_changed)
         self.grid_subdivisions.valueChanged.connect(self._grid_changed)
         self.preview.set_mode(str(self.mode.currentData()))
+        self.preview.zoomChanged.connect(
+            lambda zoom: self.zoom_label.setText(f"{round(zoom * 100)}%")
+        )
 
     def _grid_changed(self, _value: int) -> None:
         self.preview.grid_size = self.grid_size.value()
@@ -306,7 +331,7 @@ class ImageEditDialog(QDialog):
             crop = self.preview.crop.intersected(frame)
             if 1 <= crop.width() < self.frame_w or 1 <= crop.height() < self.frame_h:
                 try:
-                    png, rect = crop_image_to_rect(
+                    sub, rect = crop_image_to_rect(
                         self.preview.image,
                         frame,
                         self.preview.fit,
@@ -314,8 +339,8 @@ class ImageEditDialog(QDialog):
                         tuple(self.preview.offset),
                     )
                 except Exception:  # noqa: BLE001 - invalid crop just keeps image
-                    png, rect = None, None
-                if png is not None:
-                    self._result_png = png
+                    sub, rect = None, None
+                if sub is not None:
+                    self._result_png = encode_png(sub)
                     self._result_rect = rect
         super().accept()

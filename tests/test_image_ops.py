@@ -6,8 +6,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QApplication
 
-from javcover.image_ops import compose_project, crop_image_to_rect, decode_png, encode_png
-from javcover.models import DesignElement, Project, Rect, Region
+from javcover.core.crop import crop_image_to_rect
+from javcover.services.image_ops import compose_project, encode_png
+from javcover.core.models import DesignElement, Project, Rect, Region
 
 
 def solid_png(width: int, height: int, color: QColor) -> bytes:
@@ -186,11 +187,10 @@ class ImageCompositionTests(unittest.TestCase):
         image.fill(QColor("#112233"))
         from PySide6.QtCore import QRectF
 
-        png, rect = crop_image_to_rect(
+        sub, rect = crop_image_to_rect(
             image, QRectF(0, 0, 6, 6), "stretch", QRectF(1, 2, 3, 3)
         )
-        cropped = decode_png(png)
-        self.assertEqual((cropped.width(), cropped.height()), (3, 3))
+        self.assertEqual((sub.width(), sub.height()), (3, 3))
         self.assertEqual(rect, QRectF(1, 2, 3, 3))
 
     def test_text_element_renders_to_the_requested_color(self) -> None:

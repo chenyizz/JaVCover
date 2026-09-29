@@ -10,7 +10,7 @@ from typing import Any
 
 from PySide6.QtGui import QColor
 
-from javcover.models import (
+from javcover.core.models import (
     DesignElement,
     Guide,
     MAX_CANVAS_PIXELS,

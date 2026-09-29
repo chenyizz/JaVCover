@@ -5,8 +5,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from javcover.models import DesignElement, Guide, Project, Rect, Region
-from javcover.template_io import TemplateError, load_project, save_project
+from javcover.core.models import DesignElement, Guide, Project, Rect, Region
+from javcover.services.template_io import TemplateError, load_project, save_project
 
 
 class TemplateIoTests(unittest.TestCase):
@@ -297,7 +297,7 @@ class TemplateIoTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "broken.javcover"
             with patch(
-                "javcover.template_io.zipfile.ZipFile",
+                "javcover.services.template_io.zipfile.ZipFile",
                 side_effect=ValueError("archive failure"),
             ):
                 with self.assertRaises(ValueError):

@@ -12,8 +12,8 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
 
-from javcover.models import Rect
-from javcover.tasks import TaskCancelled
+from javcover.core.models import Rect
+from javcover.core.tasks import TaskCancelled
 
 
 def suggest_color_blocks(image: QImage) -> list[Rect]:

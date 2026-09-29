@@ -22,16 +22,14 @@ from PySide6.QtWidgets import (
     QToolButton,
 )
 
-from javcover.app import (
-    MainWindow,
-    PreferencesDialog,
-    _startup_path,
-    format_output_name,
-)
-from javcover.image_ops import encode_png
-from javcover.tasks import TaskCancelled
-from javcover.ui.main_window import _asset_display_name
-from javcover.models import DesignElement, Project, Rect, Region
+from javcover.app import _startup_path
+from javcover.core.constants import format_output_name
+from javcover.ui.dialogs.preferences import PreferencesDialog
+from javcover.ui.main_window import MainWindow
+from javcover.services.image_ops import encode_png
+from javcover.core.tasks import TaskCancelled
+from javcover.ui.features.assets import _asset_display_name
+from javcover.core.models import DesignElement, Project, Rect, Region
 
 
 class MainWindowStyleTests(unittest.TestCase):
@@ -878,7 +876,7 @@ class MainWindowStyleTests(unittest.TestCase):
             window._refresh_region_list()
             try:
                 with patch(
-                    "javcover.ui.main_window.QInputDialog.getText",
+                    "javcover.ui.features.regions.QInputDialog.getText",
                     return_value=("新名称", True),
                 ):
                     window._rename_region_from_list(window.region_list.item(0))
@@ -1071,7 +1069,7 @@ class MainWindowStyleTests(unittest.TestCase):
         )
 
     def test_new_canvas_dialog_preset_sets_shape(self) -> None:
-        from javcover.ui.dialogs import NewCanvasDialog
+        from javcover.ui.dialogs.new_canvas import NewCanvasDialog
 
         dialog = NewCanvasDialog(None, 1200, 800)
         try:
@@ -1115,7 +1113,7 @@ class MainWindowStyleTests(unittest.TestCase):
                 window.close()
 
     def test_scrub_spinbox_drag_changes_value(self) -> None:
-        from javcover.ui.scrub import ScrubSpinBox
+        from javcover.ui.widgets.scrub import ScrubSpinBox
 
         spin = ScrubSpinBox()
         spin.setRange(0, 1000)
@@ -1136,8 +1134,8 @@ class MainWindowStyleTests(unittest.TestCase):
     def test_image_edit_dialog_crops(self) -> None:
         from PySide6.QtCore import QRectF
 
-        from javcover.image_ops import decode_png
-        from javcover.ui.image_edit import ImageEditDialog
+        from javcover.services.image_ops import decode_png
+        from javcover.ui.dialogs.image_edit import ImageEditDialog
 
         image = QImage(40, 20, QImage.Format.Format_ARGB32)
         image.fill(QColor("#336699"))
@@ -1158,7 +1156,7 @@ class MainWindowStyleTests(unittest.TestCase):
             dialog.close()
 
     def test_panel_template_names_and_features(self) -> None:
-        from javcover.ui.panel import PanelTitleBar
+        from javcover.ui.widgets.panel import PanelTitleBar
 
         with tempfile.TemporaryDirectory() as directory:
             window = MainWindow(
@@ -1196,6 +1194,24 @@ class MainWindowStyleTests(unittest.TestCase):
             finally:
                 window.dirty = False
                 window.close()
+
+    def test_image_edit_dialog_zoom(self) -> None:
+        from javcover.ui.dialogs.image_edit import ImageEditDialog
+
+        image = QImage(40, 20, QImage.Format.Format_ARGB32)
+        image.fill(QColor("#336699"))
+        dialog = ImageEditDialog(
+            None, image, QSize(40, 20), "stretch", (0, 0),
+            allow_pan=False, allow_crop=True, title="t",
+        )
+        try:
+            dialog.preview.set_zoom(2.0)
+            self.assertAlmostEqual(dialog.preview.zoom, 2.0)
+            dialog.preview.set_zoom(1000.0)
+            self.assertLessEqual(dialog.preview.zoom, 12.0)
+            self.assertGreaterEqual(dialog.preview.zoom, 0.2)
+        finally:
+            dialog.close()
 
     def test_grid_spin_buttons_step_and_respect_one_minimum(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

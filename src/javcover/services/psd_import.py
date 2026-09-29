@@ -6,8 +6,8 @@ from typing import Any
 
 from PySide6.QtGui import QImage
 
-from javcover.image_ops import encode_png
-from javcover.models import MAX_CANVAS_PIXELS, DesignElement, Project
+from javcover.services.image_ops import encode_png
+from javcover.core.models import MAX_CANVAS_PIXELS, DesignElement, Project
 
 
 class PsdImportError(ValueError):

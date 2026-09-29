@@ -4,15 +4,15 @@ from importlib.util import find_spec
 from pathlib import Path
 from types import SimpleNamespace
 
-from javcover.psd_import import (
+from javcover.services.psd_import import (
     PsdImportError,
     _text_style,
     import_psd,
     import_psd_overlay,
     rasterize_psd,
 )
-from javcover.image_ops import compose_project, decode_png, encode_png
-from javcover.models import Project
+from javcover.services.image_ops import compose_project, decode_png, encode_png
+from javcover.core.models import Project
 from PySide6.QtGui import QColor, QImage
 
 

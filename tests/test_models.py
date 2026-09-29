@@ -1,6 +1,6 @@
 import unittest
 
-from javcover.models import Guide, Rect, snap_rect
+from javcover.core.models import Guide, Rect, snap_rect
 
 
 class RectTests(unittest.TestCase):
