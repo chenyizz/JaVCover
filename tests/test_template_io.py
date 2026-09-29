@@ -38,7 +38,7 @@ class TemplateIoTests(unittest.TestCase):
                     name="封面",
                     id="0123456789abcdef0123456789abcdef",
                     background_png=b"region image bytes",
-                    locked=True,
+                    lock="full",
                     visible=False,
                 )
             ],
@@ -81,7 +81,7 @@ class TemplateIoTests(unittest.TestCase):
         self.assertEqual(restored.height, project.height)
         self.assertEqual(restored.base_png, project.base_png)
         self.assertEqual(restored.regions, project.regions)
-        self.assertTrue(restored.regions[0].locked)
+        self.assertEqual(restored.regions[0].lock, "full")
         self.assertFalse(restored.regions[0].visible)
         self.assertEqual(restored.guides, project.guides)
         self.assertEqual(restored.elements, project.elements)
@@ -178,7 +178,7 @@ class TemplateIoTests(unittest.TestCase):
             opacity=40,
             fit="contain",
             blend_mode="multiply",
-            locked=True,
+            lock="full",
             visible=False,
         )
         project = Project(
@@ -210,7 +210,7 @@ class TemplateIoTests(unittest.TestCase):
         self.assertEqual(restored.regions[0].opacity, 40)
         self.assertEqual(restored.regions[0].fit, "contain")
         self.assertEqual(restored.regions[0].blend_mode, "multiply")
-        self.assertTrue(restored.regions[0].locked)
+        self.assertEqual(restored.regions[0].lock, "full")
         self.assertFalse(restored.regions[0].visible)
         element = restored.elements[0]
         self.assertEqual(element.opacity, 30)
@@ -350,8 +350,43 @@ class TemplateIoTests(unittest.TestCase):
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("project.json", json.dumps(manifest))
             restored = load_project(path)
-        self.assertFalse(restored.regions[0].locked)
+        self.assertEqual(restored.regions[0].lock, "none")
         self.assertTrue(restored.regions[0].visible)
+
+    def test_version_seven_boolean_lock_maps_to_full_lock(self) -> None:
+        manifest = {
+            "format_version": 7,
+            "canvas": {"width": 100, "height": 100},
+            "base_image": None,
+            "regions": [
+                {
+                    "id": "0123456789abcdef0123456789abcdef",
+                    "name": "cover",
+                    "rect": {"x": 0, "y": 0, "width": 50, "height": 50},
+                    "background_image": None,
+                    "locked": True,
+                },
+                {
+                    "id": "abcdef0123456789abcdef0123456789",
+                    "name": "back",
+                    "rect": {"x": 50, "y": 0, "width": 50, "height": 50},
+                    "background_image": None,
+                    "locked": False,
+                },
+            ],
+            "guides": [],
+            "elements": [],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "v7-lock.javcover"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("project.json", json.dumps(manifest))
+            restored = load_project(path)
+        self.assertEqual(restored.regions[0].lock, "full")
+        self.assertTrue(restored.regions[0].locked)
+        self.assertTrue(restored.regions[0].content_locked)
+        self.assertEqual(restored.regions[1].lock, "none")
+        self.assertFalse(restored.regions[1].locked)
 
 
 if __name__ == "__main__":

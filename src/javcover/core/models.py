@@ -8,6 +8,9 @@ MAX_CANVAS_PIXELS = 100_000_000
 REGION_FIT_MODES = ("cover", "contain", "stretch")
 BLEND_MODES = ("normal", "multiply", "screen", "overlay", "darken", "lighten", "add")
 CANVAS_SHAPES = ("rect", "disc")
+# Region lock modes: "none" (free), "position" (cannot move/resize, content editable),
+# "full" (nothing editable). Legacy templates used a single boolean lock -> "full".
+REGION_LOCK_MODES = ("none", "position", "full")
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,13 +64,26 @@ class Region:
     name: str
     id: str = field(default_factory=lambda: uuid4().hex)
     background_png: bytes | None = None
-    locked: bool = False
+    lock: str = "none"
     visible: bool = True
     opacity: int = 100
     fit: str = "cover"
     blend_mode: str = "normal"
     bg_dx: int = 0
     bg_dy: int = 0
+
+    @property
+    def locked(self) -> bool:
+        """True when the region cannot be moved or resized."""
+        return self.lock != "none"
+
+    @property
+    def content_locked(self) -> bool:
+        """True when even the content (background, style) cannot be edited."""
+        return self.lock == "full"
+
+    def set_lock(self, mode: str) -> None:
+        self.lock = mode if mode in REGION_LOCK_MODES else "none"
 
 
 @dataclass(slots=True)

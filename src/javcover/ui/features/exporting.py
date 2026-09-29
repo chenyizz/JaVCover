@@ -320,9 +320,12 @@ class ExportMixin:
         outer.addWidget(buttons)
         output_browse.clicked.connect(lambda: self._pick_directory(dialog, output_edit))
 
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        output_text = output_edit.text().strip()
+        dialog.deleteLater()
+        if not accepted:
             return
-        output_dir = Path(output_edit.text().strip())
+        output_dir = Path(output_text)
         if not output_dir.is_dir():
             self._error("文件夹无效", "请选择存在的输出文件夹。")
             return

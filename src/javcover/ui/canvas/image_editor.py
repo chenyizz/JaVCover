@@ -16,6 +16,7 @@ from javcover.core.errors import ImageError
 from javcover.core.models import Guide
 from javcover.services.image_ops import encode_png
 from javcover.ui.canvas.crop import HIT_TOLERANCE_PX, CropOverlay
+from javcover.ui.canvas.guide_interaction import GUIDE_HIT_PX, GuideInteraction, draw_guides
 
 _MIN_ZOOM = 0.2
 _MAX_ZOOM = 12.0
@@ -27,6 +28,7 @@ class ImageEditor(QGraphicsView):
     zoomChanged = Signal(float)
     pointerMoved = Signal(int, int)
     viewportChanged = Signal()
+    guidesChanged = Signal()
 
     def __init__(
         self,
@@ -53,6 +55,7 @@ class ImageEditor(QGraphicsView):
         self.snap_enabled = True
         self.crop_overlay = CropOverlay(QRectF(0, 0, self.frame_w, self.frame_h), 0)
         self.guides: list[Guide] = []
+        self.guide_interaction = GuideInteraction(self)
         self._base_scale = 1.0
         self._fitted = False
         self._drag: str | None = None
@@ -104,16 +107,28 @@ class ImageEditor(QGraphicsView):
         return QRectF(self.crop_overlay.rect)
 
     def add_guide(self, axis: str, position: int) -> None:
-        if axis not in ("x", "y"):
-            return
-        limit = self.frame_w if axis == "x" else self.frame_h
-        position = min(max(0, position), limit)
-        self.guides.append(Guide(axis, position))
-        self.viewport().update()
+        self.guide_interaction.add(axis, position)
 
     def clear_guides(self) -> None:
         self.guides.clear()
+        self.guide_changed()
+
+    # -- guide interaction host (see GuideHost protocol) -----------------
+    def guide_limit(self, axis: str) -> int:
+        return self.frame_w if axis == "x" else self.frame_h
+
+    def guide_list(self) -> list[Guide]:
+        return self.guides
+
+    def guide_changed(self) -> None:
         self.viewport().update()
+        self.guidesChanged.emit()
+
+    def guide_edit_begin(self) -> None:
+        pass
+
+    def guide_edit_end(self) -> None:
+        pass
 
     # -- events -----------------------------------------------------------
     def resizeEvent(self, event: object) -> None:
@@ -166,16 +181,9 @@ class ImageEditor(QGraphicsView):
         super().drawForeground(painter, rect)
         if self.mode == "crop" and self.allow_crop:
             self.crop_overlay.paint(painter)
-        for guide in self.guides:
-            line = (
-                (guide.position, 0, guide.position, self.frame_h)
-                if guide.axis == "x"
-                else (0, guide.position, self.frame_w, guide.position)
-            )
-            pen = QPen(QColor("#00d9ff"), 0, Qt.PenStyle.DashLine)
-            pen.setCosmetic(True)
-            painter.setPen(pen)
-            painter.drawLine(*line)
+        draw_guides(
+            painter, rect, self.guides, preview=self.guide_interaction.preview
+        )
 
     # -- snapping ---------------------------------------------------------
     def _snap(self, rect: QRectF) -> QRectF:
@@ -225,6 +233,12 @@ class ImageEditor(QGraphicsView):
             super().mousePressEvent(event)
             return
         point = self.mapToScene(event.position().toPoint())
+        if self.guide_interaction.press(
+            point, GUIDE_HIT_PX / max(self.transform().m11(), 0.01)
+        ):
+            self._drag = "guide"
+            event.accept()
+            return
         if self.mode == "crop" and self.allow_crop:
             tolerance = HIT_TOLERANCE_PX / max(self.transform().m11(), 0.01)
             handle = self.crop_overlay.handle_at(point, tolerance)
@@ -247,6 +261,9 @@ class ImageEditor(QGraphicsView):
     def mouseMoveEvent(self, event: object) -> None:
         point = self.mapToScene(event.position().toPoint())
         self.pointerMoved.emit(round(point.x()), round(point.y()))
+        if self._drag == "guide":
+            self.guide_interaction.move(point)
+            return
         if self._drag is None:
             return
         if self._drag == "pan":
@@ -285,6 +302,7 @@ class ImageEditor(QGraphicsView):
             Qt.MouseButton.MiddleButton,
             Qt.MouseButton.RightButton,
         ):
+            self.guide_interaction.release()
             self._drag = None
 
     def crop_result(self) -> tuple[bytes, QRectF] | None:

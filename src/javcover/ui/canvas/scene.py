@@ -6,28 +6,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QGraphicsScene
 from javcover.core.models import Guide
-
-
-
-def _draw_guide_label(painter: QPainter, visible: QRectF, guide: Guide) -> None:
-    transform = painter.worldTransform()
-    if guide.axis == "x":
-        anchor = transform.map(QPointF(guide.position, visible.top()))
-    else:
-        anchor = transform.map(QPointF(visible.left(), guide.position))
-    painter.save()
-    painter.resetTransform()
-    metrics = painter.fontMetrics()
-    text = guide.name
-    width = metrics.horizontalAdvance(text) + 6
-    height = metrics.height() + 2
-    rect = QRectF(anchor.x() + 3, anchor.y() + 3, width, height)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor(0, 0, 0, 150))
-    painter.drawRect(rect)
-    painter.setPen(QColor("#ffffff"))
-    painter.drawText(rect.adjusted(3, 0, -3, 0), Qt.AlignmentFlag.AlignVCenter, text)
-    painter.restore()
+from javcover.ui.canvas.guide_interaction import draw_guides
 
 
 class CoverScene(QGraphicsScene):
@@ -108,18 +87,13 @@ class CoverScene(QGraphicsScene):
         painter.restore()
         # Guides span the whole exposed viewport (not just the canvas) so they
         # always reach the rulers and are never clipped by dock resizing.
-        for guide in self.guides:
-            self._draw_guide(painter, rect, guide, QColor("#00d9ff"))
-        if self.preview_guide:
-            self._draw_guide(painter, rect, self.preview_guide, QColor("#ffd54a"))
-        for axis, position in self.alignment_guides:
-            pen = QPen(QColor("#c04bff"), 0, Qt.PenStyle.SolidLine)
-            pen.setCosmetic(True)
-            painter.setPen(pen)
-            if axis == "x":
-                painter.drawLine(QPointF(position, rect.top()), QPointF(position, rect.bottom()))
-            else:
-                painter.drawLine(QPointF(rect.left(), position), QPointF(rect.right(), position))
+        draw_guides(
+            painter,
+            rect,
+            self.guides,
+            preview=self.preview_guide,
+            alignment=self.alignment_guides,
+        )
         if self.crop_overlay is not None:
             self.crop_overlay.paint(painter)
 
@@ -143,23 +117,6 @@ class CoverScene(QGraphicsScene):
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(safe)
-
-    @staticmethod
-    def _draw_guide(
-        painter: QPainter, visible: QRectF, guide: Guide, color: QColor
-    ) -> None:
-        if guide.axis == "x":
-            line = (guide.position, visible.top(), guide.position, visible.bottom())
-        else:
-            line = (visible.left(), guide.position, visible.right(), guide.position)
-        shadow_pen = QPen(QColor(23, 33, 43, 140), 1)
-        shadow_pen.setCosmetic(True)
-        painter.setPen(shadow_pen)
-        painter.drawLine(*line)
-        painter.setPen(QPen(color, 0, Qt.PenStyle.DashLine))
-        painter.drawLine(*line)
-        if guide.name:
-            _draw_guide_label(painter, visible, guide)
 
     @staticmethod
     def _draw_grid_lines(

@@ -197,19 +197,19 @@ class CropTool:
 
     def current_target(self) -> tuple[str, str] | None:
         element = self.view._element(self.view.selected_element_id)
-        if element is not None and element.kind == "image" and element.png:
+        if element is not None and element.kind == "image" and element.png and not element.locked:
             return ("element", element.id)
         region = self.view._region(self.view.selected_id)
-        if region is not None and region.background_png:
+        if region is not None and region.background_png and not region.content_locked:
             return ("region", region.id)
         return None
 
     def target_at(self, point: QPointF) -> tuple[str, str] | None:
         element = self.view._element_at(point)
-        if element is not None and element.kind == "image" and element.png:
+        if element is not None and element.kind == "image" and element.png and not element.locked:
             return ("element", element.id)
         region = self.view._region_at(point)
-        if region is not None and region.background_png:
+        if region is not None and region.background_png and not region.content_locked:
             return ("region", region.id)
         return None
 
@@ -273,7 +273,7 @@ class CropTool:
             return
         if kind == "element":
             element = self.view._element(target_id)
-            if element is None or not element.png:
+            if element is None or not element.png or element.locked:
                 return
             target_rect = QRectF(element.x, element.y, element.width, element.height)
             try:
@@ -291,7 +291,7 @@ class CropTool:
             ).bounded(project.width, project.height)
         else:
             region = self.view._region(target_id)
-            if region is None or not region.background_png:
+            if region is None or not region.background_png or region.content_locked:
                 return
             target_rect = QRectF(
                 region.rect.x, region.rect.y, region.rect.width, region.rect.height

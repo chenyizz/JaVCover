@@ -20,9 +20,12 @@ class PreferencesMixin:
         dialog = PreferencesDialog(
             self._preference_values(), self._shortcut_bindings, self
         )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        if not accepted:
+            dialog.deleteLater()
             return
         self._store_preferences(dialog)
+        dialog.deleteLater()
 
     def _store_preferences(self, dialog: PreferencesDialog) -> None:
         for key, value in dialog.preference_values().items():

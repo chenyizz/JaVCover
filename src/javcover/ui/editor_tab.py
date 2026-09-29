@@ -108,7 +108,10 @@ class EditorTab(QWidget):
         )
         self.editor.pointerMoved.connect(self._pointer_moved)
         self.editor.changed.connect(self._update_crop_label)
-        self.ruler_frame.guideRequested.connect(self.editor.add_guide)
+        self.ruler_frame.guideRequested.connect(self.editor.guide_interaction.add)
+        self.ruler_frame.guidePreviewChanged.connect(
+            self.editor.guide_interaction.set_preview
+        )
         self.editor.set_mode(str(self.mode.currentData()))
         self._update_crop_label()
 

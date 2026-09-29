@@ -27,19 +27,44 @@ class EditingMixin:
         self.tabs.tabCloseRequested.connect(self._on_tab_close_requested)
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self._editor_tabs: dict[tuple[str, str], EditorTab] = {}
+        self._active_editor_tab: EditorTab | None = None
+        self._dock_state_before_editor: dict[str, bool] | None = None
         return self.tabs
 
     def _on_tab_changed(self, index: int) -> None:
         widget = self.tabs.widget(index)
-        if widget is None or index == 0:
-            return
-        for (kind, target_id), tab in self._editor_tabs.items():
-            if tab is widget:
-                if kind == "element":
-                    self.view.select_element(target_id)
-                else:
-                    self.view.select_region(target_id)
-                return
+        tab = next((t for t in self._editor_tabs.values() if t is widget), None)
+        if tab is not None:
+            for (kind, target_id), candidate in self._editor_tabs.items():
+                if candidate is tab:
+                    if kind == "element":
+                        self.view.select_element(target_id)
+                    else:
+                        self.view.select_region(target_id)
+                    break
+        self._active_editor_tab = tab
+        self._apply_editor_dock_state(tab is not None)
+        self._refresh_guide_list()
+
+    def _apply_editor_dock_state(self, editing: bool) -> None:
+        docks = (self.region_dock, self.element_dock, self.guide_dock)
+        if editing:
+            if self._dock_state_before_editor is None:
+                self._dock_state_before_editor = {
+                    dock.objectName(): dock.isVisible() for dock in docks
+                }
+            self.region_dock.setVisible(False)
+            self.element_dock.setVisible(False)
+            self.guide_dock.setVisible(True)
+        elif self._dock_state_before_editor is not None:
+            state = self._dock_state_before_editor
+            self._dock_state_before_editor = None
+            for dock in docks:
+                dock.setVisible(state.get(dock.objectName(), True))
+
+    def _on_editor_guides_changed(self, tab: EditorTab) -> None:
+        if self._active_editor_tab is tab:
+            self._refresh_guide_list()
 
     def _on_tab_close_requested(self, index: int) -> None:
         widget = self.tabs.widget(index)
@@ -97,6 +122,7 @@ class EditingMixin:
         )
         tab.applied.connect(lambda k=key: self._apply_editor(k))
         tab.cancelled.connect(lambda k=key: self._close_editor(k))
+        tab.editor.guidesChanged.connect(lambda t=tab: self._on_editor_guides_changed(t))
         self._editor_tabs[key] = tab
         self.tabs.addTab(tab, title)
         self.tabs.setCurrentWidget(tab)

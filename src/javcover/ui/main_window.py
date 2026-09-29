@@ -136,7 +136,9 @@ class MainWindow(
         self.view.editRequested.connect(self._on_edit_requested)
         self.ruler_frame = RulerFrame(self.view)
         self.ruler_frame.guideRequested.connect(self.add_guide_at)
-        self.ruler_frame.guidePreviewChanged.connect(self.view.set_guide_preview)
+        self.ruler_frame.guidePreviewChanged.connect(
+            self.view.guide_interaction.set_preview
+        )
 
         self.status = QLabel(
             f"新建画布 {self.project.width} × {self.project.height} px"

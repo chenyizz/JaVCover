@@ -29,7 +29,7 @@ from javcover.ui.main_window import MainWindow
 from javcover.services.image_ops import encode_png
 from javcover.core.tasks import TaskCancelled
 from javcover.ui.features.assets import _asset_display_name
-from javcover.core.models import DesignElement, Project, Rect, Region
+from javcover.core.models import DesignElement, Guide, Project, Rect, Region
 
 
 class MainWindowStyleTests(unittest.TestCase):
@@ -275,10 +275,14 @@ class MainWindowStyleTests(unittest.TestCase):
                 window.region_list.setCurrentItem(row_item)
                 self.assertEqual(window.view.selected_id, region.id)
                 self.assertTrue(window.region_rows[region.id].property("active"))
-                QTest.mouseClick(window.region_row_controls[region.id][0], Qt.MouseButton.LeftButton)
+                lock_button = window.region_row_controls[region.id][0]
+                QTest.mouseClick(lock_button, Qt.MouseButton.LeftButton)
+                self.assertEqual(region.lock, "position")
                 self.assertTrue(region.locked)
-                self.assertFalse(window.region_name.isEnabled())
-                self.assertFalse(window.remove_region_button.isEnabled())
+                self.assertFalse(region.content_locked)
+                self.assertTrue(window.region_name.isEnabled())
+                self.assertTrue(window.replace_background_button.isEnabled())
+                self.assertFalse(window.position_fields["x"].isEnabled())
 
                 window._tool_actions[0].setChecked(True)
                 self.app.processEvents()
@@ -293,7 +297,14 @@ class MainWindowStyleTests(unittest.TestCase):
                 self.assertEqual(region.rect, original_rect)
                 self.assertIn(region, window.project.regions)
 
-                QTest.mouseClick(window.region_row_controls[region.id][0], Qt.MouseButton.LeftButton)
+                QTest.mouseClick(lock_button, Qt.MouseButton.LeftButton)
+                self.assertEqual(region.lock, "full")
+                self.assertTrue(region.content_locked)
+                self.assertFalse(window.region_name.isEnabled())
+                self.assertFalse(window.remove_region_button.isEnabled())
+
+                QTest.mouseClick(lock_button, Qt.MouseButton.LeftButton)
+                self.assertEqual(region.lock, "none")
                 self.assertFalse(region.locked)
                 self.assertTrue(window.region_name.isEnabled())
                 QTest.mouseClick(window.region_row_controls[region.id][1], Qt.MouseButton.LeftButton)
@@ -1183,6 +1194,75 @@ class MainWindowStyleTests(unittest.TestCase):
             finally:
                 window.dirty = False
                 window.close()
+
+    def test_editor_tab_dynamic_panels_and_shared_guides(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            window = MainWindow(
+                settings=QSettings(
+                    str(Path(directory) / "ui.ini"), QSettings.Format.IniFormat
+                )
+            )
+            window.show()
+            self.app.processEvents()
+            image = QImage(30, 20, QImage.Format.Format_ARGB32)
+            image.fill(QColor("#336699"))
+            element = DesignElement(
+                kind="image", x=0, y=0, width=30, height=20, name="logo",
+                png=encode_png(image),
+            )
+            window.project.elements.append(element)
+            window.view.refresh_overlays()
+            window.view.select_element(element.id)
+            try:
+                window.edit_selected_image()
+                self.app.processEvents()
+                tab = window._active_editor_tab
+                self.assertIsNotNone(tab)
+                self.assertTrue(window.guide_dock.isVisible())
+                self.assertFalse(window.region_dock.isVisible())
+                self.assertFalse(window.element_dock.isVisible())
+
+                window.add_guide_at("x", 10)
+                self.assertEqual(tab.editor.guides, [Guide("x", 10)])
+                self.assertEqual(window.project.guides, [])
+                self.assertEqual(window.guide_list.count(), 1)
+
+                tab.editor.guide_interaction.set_preview("y", 5)
+                self.assertEqual(tab.editor.guide_interaction.preview, Guide("y", 5))
+
+                window.tabs.setCurrentIndex(0)
+                self.app.processEvents()
+                self.assertTrue(window.region_dock.isVisible())
+                self.assertTrue(window.element_dock.isVisible())
+                self.assertEqual(window.guide_list.count(), 0)
+            finally:
+                window.dirty = False
+                window.close()
+
+    def test_image_editor_guide_drag_reuses_interaction(self) -> None:
+        from PySide6.QtCore import QPointF
+
+        from javcover.ui.canvas.image_editor import ImageEditor
+
+        image = QImage(40, 20, QImage.Format.Format_ARGB32)
+        image.fill(QColor("#336699"))
+        editor = ImageEditor(
+            image, QSize(100, 100), "stretch", (0, 0),
+            allow_pan=True, allow_crop=True,
+        )
+        try:
+            editor.resize(500, 400)
+            editor.show()
+            self.app.processEvents()
+            editor.guide_interaction.add("x", 50)
+            self.assertEqual(editor.guides, [Guide("x", 50)])
+            self.assertTrue(editor.guide_interaction.press(QPointF(50, 20), 5))
+            editor.guide_interaction.move(QPointF(70, 20))
+            self.assertEqual(editor.guides[0], Guide("x", 70))
+            editor.guide_interaction.release()
+            self.assertFalse(editor.guide_interaction.dragging)
+        finally:
+            editor.close()
 
     def test_panel_template_names_and_features(self) -> None:
         from javcover.ui.widgets.panel import PanelTitleBar

@@ -7,10 +7,21 @@ from PySide6.QtWidgets import QComboBox, QFileDialog, QFormLayout, QHBoxLayout, 
 from javcover.core.constants import _BLEND_MODE_LABELS
 from javcover.core.errors import ImageError
 from javcover.services.image_ops import encode_png, load_image
-from javcover.core.models import BLEND_MODES, Rect, Region
+from javcover.core.models import BLEND_MODES, REGION_LOCK_MODES, Rect, Region
 from javcover.ui.widgets.scrub import ScrubSpinBox
 from uuid import uuid4
 import copy
+
+_LOCK_ICONS = {
+    "none": "lock-open.svg",
+    "position": "lock-position.svg",
+    "full": "lock-closed.svg",
+}
+_LOCK_TOOLTIPS = {
+    "none": "未锁定（点击切换为位置锁）",
+    "position": "位置锁：不可移动/缩放，可替换背景（点击切换为全锁）",
+    "full": "全锁：不可移动也不可替换背景（点击解锁）",
+}
 
 
 class RegionPanelMixin:
@@ -106,15 +117,15 @@ class RegionPanelMixin:
                 name_label.setStyleSheet("color: #929ba3;")
             row_layout.addWidget(name_label, 1)
             lock_button = self._region_row_button(
-                "lock-closed.svg" if region.locked else "lock-open.svg",
-                "解锁区域" if region.locked else "锁定区域",
+                _LOCK_ICONS.get(region.lock, _LOCK_ICONS["none"]),
+                _LOCK_TOOLTIPS.get(region.lock, _LOCK_TOOLTIPS["none"]),
             )
             visibility_button = self._region_row_button(
                 "eye-visible.svg" if region.visible else "eye-hidden.svg",
                 "隐藏区域" if region.visible else "显示区域",
             )
             lock_button.clicked.connect(
-                lambda _checked=False, region_id=region.id: self._toggle_region_locked(region_id)
+                lambda _checked=False, region_id=region.id: self._cycle_region_lock(region_id)
             )
             visibility_button.clicked.connect(
                 lambda _checked=False, region_id=region.id: self._toggle_region_visible(region_id)
@@ -133,15 +144,17 @@ class RegionPanelMixin:
         self.region_list.verticalScrollBar().setValue(scroll)
         self._update_region_controls(selected)
 
-    def _toggle_region_locked(self, region_id: str) -> None:
+    def _cycle_region_lock(self, region_id: str) -> None:
         region = next(
             (region for region in self.project.regions if region.id == region_id),
             None,
         )
         if region is None:
             return
+        index = REGION_LOCK_MODES.index(region.lock) if region.lock in REGION_LOCK_MODES else 0
+        mode = REGION_LOCK_MODES[(index + 1) % len(REGION_LOCK_MODES)]
         self._begin_edit()
-        region.locked = not region.locked
+        region.set_lock(mode)
         self.view.refresh_overlays()
         self._finish_edit()
 
@@ -160,17 +173,18 @@ class RegionPanelMixin:
     def _update_region_controls(self, region_id: str | None) -> None:
         region = next((item for item in self.project.regions if item.id == region_id), None)
         enabled = region is not None
-        editable = enabled and region is not None and not region.locked
-        self.region_name.setEnabled(editable)
-        self.replace_background_button.setEnabled(editable)
-        self.clear_background_button.setEnabled(editable)
-        self.remove_region_button.setEnabled(editable)
+        content_editable = enabled and region is not None and not region.content_locked
+        geometry_editable = enabled and region is not None and not region.locked
+        self.region_name.setEnabled(content_editable)
+        self.replace_background_button.setEnabled(content_editable)
+        self.clear_background_button.setEnabled(content_editable)
+        self.remove_region_button.setEnabled(content_editable)
         self.duplicate_region_button.setEnabled(enabled)
-        self.region_fit.setEnabled(editable)
-        self.region_opacity.setEnabled(editable)
-        self.region_blend.setEnabled(editable)
+        self.region_fit.setEnabled(content_editable)
+        self.region_opacity.setEnabled(content_editable)
+        self.region_blend.setEnabled(content_editable)
         for spin in self.position_fields.values():
-            spin.setEnabled(editable)
+            spin.setEnabled(geometry_editable)
         if region is None:
             self.region_name.clear()
             for spin in self.position_fields.values():
@@ -239,7 +253,7 @@ class RegionPanelMixin:
     def _rename_region(self) -> None:
         region = self._selected_region()
         name = self.region_name.text().strip()
-        if region is None or region.locked or not name or name == region.name:
+        if region is None or region.content_locked or not name or name == region.name:
             return
         self._begin_edit()
         region.name = name
@@ -251,7 +265,7 @@ class RegionPanelMixin:
         region = next(
             (r for r in self.project.regions if r.id == region_id), None
         )
-        if region is None or region.locked:
+        if region is None or region.content_locked:
             return
         name, accepted = QInputDialog.getText(
             self, "重命名区域", "区域名称", text=region.name
@@ -289,7 +303,7 @@ class RegionPanelMixin:
 
     def _region_fit_changed(self, _index: int) -> None:
         region = self._selected_region()
-        if region is None or region.locked:
+        if region is None or region.content_locked:
             return
         fit = self.region_fit.currentData()
         if not isinstance(fit, str) or fit == region.fit:
@@ -301,7 +315,7 @@ class RegionPanelMixin:
 
     def _region_opacity_changed(self) -> None:
         region = self._selected_region()
-        if region is None or region.locked:
+        if region is None or region.content_locked:
             return
         value = self.region_opacity.value()
         if value == region.opacity:
@@ -313,7 +327,7 @@ class RegionPanelMixin:
 
     def _region_blend_changed(self, _index: int) -> None:
         region = self._selected_region()
-        if region is None or region.locked:
+        if region is None or region.content_locked:
             return
         blend = self.region_blend.currentData()
         if not isinstance(blend, str) or blend == region.blend_mode:
@@ -325,7 +339,7 @@ class RegionPanelMixin:
 
     def replace_region_background(self) -> None:
         region = self._selected_region()
-        if region is None or region.locked:
+        if region is None or region.content_locked:
             return
         path, _ = QFileDialog.getOpenFileName(
             self, "选择区域背景", "", "图片 (*.png *.jpg *.jpeg *.bmp *.webp);;所有文件 (*)"
@@ -345,7 +359,7 @@ class RegionPanelMixin:
 
     def clear_region_background(self) -> None:
         region = self._selected_region()
-        if region is None or region.locked or not region.background_png:
+        if region is None or region.content_locked or not region.background_png:
             return
         self._begin_edit()
         region.background_png = None
@@ -356,7 +370,7 @@ class RegionPanelMixin:
 
     def remove_selected_region(self) -> None:
         region = self._selected_region()
-        if region is None or region.locked:
+        if region is None or region.content_locked:
             return
         self._begin_edit()
         self.project.regions.remove(region)

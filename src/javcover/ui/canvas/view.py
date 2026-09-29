@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import QGraphicsLineItem, QGraphicsRectItem, QGraphicsView
+from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsView
 from javcover.core.constants import IMAGE_SUFFIXES
 from javcover.core.errors import ImageError
 from javcover.services.image_ops import decode_png
 from javcover.core.models import DesignElement, Guide, Project, Rect, Region, snap_rect
 from javcover.ui.canvas.crop import CropOverlay, CropTool
+from javcover.ui.canvas.guide_interaction import GUIDE_HIT_PX, GuideInteraction
 from pathlib import Path
-from typing import Literal
 from javcover.ui.canvas.items import DesignElementItem
 from javcover.ui.canvas.items import RegionItem
 from javcover.ui.canvas.scene import CoverScene
@@ -35,12 +35,12 @@ class CoverView(QGraphicsView):
         self.image_item = None
         self.region_items: dict[str, RegionItem] = {}
         self.element_items: dict[str, DesignElementItem] = {}
-        self.guide_items: list[QGraphicsLineItem] = []
         self.selected_id: str | None = None
         self.selected_element_id: str | None = None
         self.draw_mode = True
         self.crop_mode = False
         self.crop_tool = CropTool(self)
+        self.guide_interaction = GuideInteraction(self)
         self._bg_origin = QPointF()
         self._bg_offsets = (0, 0)
         self.snapping = True
@@ -58,9 +58,6 @@ class CoverView(QGraphicsView):
         self._original_rect: Rect | None = None
         self._resize_corner: str | None = None
         self._shift_down = False
-        self._dragged_guide_index: int | None = None
-        self._original_guide: Guide | None = None
-        self.guide_preview: Guide | None = None
         self._preview: QGraphicsRectItem | None = None
         self._pan_start = QPointF()
         self._scroll_start = (0, 0)
@@ -118,7 +115,6 @@ class CoverView(QGraphicsView):
         self.cover_scene.clear()
         self.region_items.clear()
         self.element_items.clear()
-        self.guide_items.clear()
         self.image_item = None
         self.cover_scene.canvas_width = project.width
         self.cover_scene.canvas_height = project.height
@@ -131,7 +127,7 @@ class CoverView(QGraphicsView):
             self.image_item = self.cover_scene.addPixmap(QPixmap.fromImage(base))
             self.image_item.setZValue(-1)
         self.cover_scene.setSceneRect(0, 0, project.width, project.height)
-        self.guide_preview = None
+        self.guide_interaction.preview = None
         self.cover_scene.preview_guide = None
         self.refresh_overlays()
         if saved_transform is not None:
@@ -149,11 +145,8 @@ class CoverView(QGraphicsView):
             self.cover_scene.removeItem(item)
         for item in self.element_items.values():
             self.cover_scene.removeItem(item)
-        for item in self.guide_items:
-            self.cover_scene.removeItem(item)
         self.region_items.clear()
         self.element_items.clear()
-        self.guide_items.clear()
         for region in self.project.regions:
             background = decode_png(region.background_png) if region.background_png else None
             item = RegionItem(region, background)
@@ -223,16 +216,25 @@ class CoverView(QGraphicsView):
         self.cover_scene.safe_margin = self.safe_margin
         self.cover_scene.update()
 
-    def set_guide_preview(self, axis: str, position: int | None) -> None:
-        if axis not in ("x", "y"):
-            self.guide_preview = None
-        elif position is not None:
-            guide_axis: Literal["x", "y"] = "x" if axis == "x" else "y"
-            self.guide_preview = Guide(guide_axis, position)
-        else:
-            self.guide_preview = None
-        self.cover_scene.preview_guide = self.guide_preview
+    # -- guide interaction host (see GuideHost protocol) -----------------
+    def guide_limit(self, axis: str) -> int:
+        if self.project is None:
+            return 0
+        return self.project.width if axis == "x" else self.project.height
+
+    def guide_list(self) -> list[Guide]:
+        return self.project.guides if self.project is not None else []
+
+    def guide_changed(self) -> None:
+        self.cover_scene.guides = self.guide_list()
+        self.cover_scene.preview_guide = self.guide_interaction.preview
         self.cover_scene.update()
+
+    def guide_edit_begin(self) -> None:
+        self.editStarted.emit()
+
+    def guide_edit_end(self) -> None:
+        self.editFinished.emit()
 
     def fit_canvas(self) -> None:
         if self.project:
@@ -396,8 +398,7 @@ class CoverView(QGraphicsView):
         self._drag_kind = None
         self._original_rect = None
         self._resize_corner = None
-        self._dragged_guide_index = None
-        self._original_guide = None
+        self.guide_interaction.release()
         self._shift_down = False
         self.crop_tool.release()
         self.set_alignment_guides([])
@@ -479,20 +480,8 @@ class CoverView(QGraphicsView):
                     region.bg_dy = dy
                     self.cover_scene.update()
             return
-        if self._drag_kind == "guide" and self._dragged_guide_index is not None:
-            old = self._original_guide
-            if old is not None:
-                position = round(scene_pos.x() if old.axis == "x" else scene_pos.y())
-                position = min(
-                    max(0, position),
-                    self.project.width if old.axis == "x" else self.project.height,
-                )
-                if self.project.guides[self._dragged_guide_index].position != position:
-                    self.project.guides[self._dragged_guide_index] = Guide(
-                        old.axis, position, old.name
-                    )
-                    self.cover_scene.guides = self.project.guides
-                    self.cover_scene.update()
+        if self._drag_kind == "guide":
+            self.guide_interaction.move(scene_pos)
             return
         if self._drag_kind == "draw" and self._preview is not None:
             rect = QRectF(self._start_scene, scene_pos).normalized()
@@ -533,6 +522,8 @@ class CoverView(QGraphicsView):
             if self._drag_kind in ("draw", "crop"):
                 self._cancel_drawing()
             elif self._drag_kind in ("move", "resize", "guide", "bgpan"):
+                if self._drag_kind == "guide":
+                    self.guide_interaction.release()
                 self._clear_drag_state()
                 self.editFinished.emit()
             self._drag_kind = "pan"
@@ -561,7 +552,7 @@ class CoverView(QGraphicsView):
             if (
                 region is not None
                 and region.background_png
-                and not region.locked
+                and not region.content_locked
                 and region.rect.x <= scene_pos.x() <= region.rect.right
                 and region.rect.y <= scene_pos.y() <= region.rect.bottom
             ):
@@ -571,12 +562,10 @@ class CoverView(QGraphicsView):
                 self._bg_offsets = (region.bg_dx, region.bg_dy)
                 event.accept()
                 return
-        guide_index = self._guide_at(raw_scene_pos)
-        if guide_index is not None:
-            self.editStarted.emit()
+        if self.guide_interaction.press(
+            raw_scene_pos, GUIDE_HIT_PX / max(self.transform().m11(), 0.01)
+        ):
             self._drag_kind = "guide"
-            self._dragged_guide_index = guide_index
-            self._original_guide = self.project.guides[guide_index]
             event.accept()
             return
         scene_pos = self._clamp_to_canvas(raw_scene_pos)
@@ -665,7 +654,7 @@ class CoverView(QGraphicsView):
         elif self._drag_kind in ("move", "resize"):
             self.editFinished.emit()
         elif self._drag_kind == "guide":
-            self.editFinished.emit()
+            self.guide_interaction.release()
         self._clear_drag_state()
         event.accept()
 
@@ -905,17 +894,6 @@ class CoverView(QGraphicsView):
             min(max(0.0, point.x()), float(self.project.width)),
             min(max(0.0, point.y()), float(self.project.height)),
         )
-
-    def _guide_at(self, point: QPointF) -> int | None:
-        if self.project is None:
-            return None
-        tolerance = 7 / max(self.transform().m11(), 0.01)
-        for index in range(len(self.project.guides) - 1, -1, -1):
-            guide = self.project.guides[index]
-            distance = abs(point.x() - guide.position) if guide.axis == "x" else abs(point.y() - guide.position)
-            if distance <= tolerance:
-                return index
-        return None
 
     def _snap_rect(self, rect: Rect, exclude_region_id: str | None = None) -> Rect:
         if self.project is None:

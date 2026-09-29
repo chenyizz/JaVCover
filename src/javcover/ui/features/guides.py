@@ -1,10 +1,14 @@
-"""Feature mixin: GuidePanelMixin."""
+"""Feature mixin: GuidePanelMixin.
+
+The panel always drives the *active* guide source through a shared
+:class:`GuideInteraction`: the cover canvas when the cover tab is active, or the
+current image-editor tab when an editor tab is active.
+"""
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QPushButton
-from javcover.core.models import Guide
 from javcover.ui.widgets.scrub import ScrubSpinBox
 from typing import Literal
 
@@ -40,21 +44,30 @@ class GuidePanelMixin:
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.guide_dock)
         self._bind_panel_action(self.guides_panel_action, self.guide_dock)
 
+    def _active_guide_interaction(self):
+        editor = getattr(self, "_active_editor_tab", None)
+        if editor is not None:
+            return editor.editor.guide_interaction
+        return self.view.guide_interaction
+
     def _refresh_guide_list(self) -> None:
+        interaction = self._active_guide_interaction()
+        guides = interaction.host.guide_list()
         selected = self.guide_list.currentRow()
         self.guide_list.blockSignals(True)
         self.guide_list.clear()
-        for guide in self.project.guides:
+        for guide in guides:
             axis = "垂直" if guide.axis == "x" else "水平"
             label = f"{guide.name} · " if guide.name else ""
             self.guide_list.addItem(f"{label}{axis} · {guide.position} px")
-        if self.project.guides:
-            self.guide_list.setCurrentRow(min(max(selected, 0), len(self.project.guides) - 1))
+        if guides:
+            self.guide_list.setCurrentRow(min(max(selected, 0), len(guides) - 1))
         self.guide_list.blockSignals(False)
         self._guide_selected(self.guide_list.currentRow())
 
     def add_guide(self, axis: Literal["x", "y"]) -> None:
-        limit = self.project.width if axis == "x" else self.project.height
+        interaction = self._active_guide_interaction()
+        limit = interaction.host.guide_limit(axis)
         axis_name = "垂直参考线 X" if axis == "x" else "水平参考线 Y"
         position, accepted = QInputDialog.getInt(
             self, "添加参考线", axis_name, limit // 2, 0, limit
@@ -66,22 +79,19 @@ class GuidePanelMixin:
     def add_guide_at(self, axis: str, position: int) -> None:
         if axis not in ("x", "y"):
             return
-        guide_axis: Literal["x", "y"] = "x" if axis == "x" else "y"
-        limit = self.project.width if axis == "x" else self.project.height
-        position = min(max(0, position), limit)
-        self._begin_edit()
-        self.project.guides.append(Guide(guide_axis, position))
-        self.view.refresh_overlays()
-        self._finish_edit()
-        self.guide_list.setCurrentRow(len(self.project.guides) - 1)
+        interaction = self._active_guide_interaction()
+        interaction.add(axis, position)
+        self.guide_list.setCurrentRow(len(interaction.host.guide_list()) - 1)
 
     def _guide_selected(self, row: int) -> None:
-        enabled = 0 <= row < len(self.project.guides)
+        interaction = self._active_guide_interaction()
+        guides = interaction.host.guide_list()
+        enabled = 0 <= row < len(guides)
         self.guide_position.setEnabled(enabled)
         self.guide_name.setEnabled(enabled)
         if enabled:
-            guide = self.project.guides[row]
-            self.guide_position.setMaximum(self.project.width if guide.axis == "x" else self.project.height)
+            guide = guides[row]
+            self.guide_position.setMaximum(interaction.host.guide_limit(guide.axis))
             self.guide_position.setValue(guide.position)
             self.guide_name.setText(guide.name)
         else:
@@ -90,35 +100,12 @@ class GuidePanelMixin:
 
     def _rename_guide(self) -> None:
         row = self.guide_list.currentRow()
-        if not 0 <= row < len(self.project.guides):
-            return
-        old = self.project.guides[row]
-        name = self.guide_name.text().strip()
-        if name == old.name:
-            return
-        self._begin_edit()
-        self.project.guides[row] = Guide(old.axis, old.position, name)
-        self._finish_edit()
+        self._active_guide_interaction().rename(row, self.guide_name.text().strip())
 
     def _move_guide(self) -> None:
         row = self.guide_list.currentRow()
-        if not 0 <= row < len(self.project.guides):
-            return
-        old = self.project.guides[row]
-        position = self.guide_position.value()
-        if position == old.position:
-            return
-        self._begin_edit()
-        self.project.guides[row] = Guide(old.axis, position, old.name)
-        self.view.refresh_overlays()
-        self._finish_edit()
+        self._active_guide_interaction().move_to(row, self.guide_position.value())
 
     def remove_guide(self) -> None:
         row = self.guide_list.currentRow()
-        if not 0 <= row < len(self.project.guides):
-            return
-        self._begin_edit()
-        del self.project.guides[row]
-        self.view.refresh_overlays()
-        self._finish_edit()
-
+        self._active_guide_interaction().remove(row)

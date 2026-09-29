@@ -18,12 +18,13 @@ from javcover.core.models import (
     Rect,
     Region,
     REGION_FIT_MODES,
+    REGION_LOCK_MODES,
     BLEND_MODES,
     CANVAS_SHAPES,
 )
 
-FORMAT_VERSION = 7
-SUPPORTED_VERSIONS = (1, 2, 3, 4, 5, 6, FORMAT_VERSION)
+FORMAT_VERSION = 8
+SUPPORTED_VERSIONS = (1, 2, 3, 4, 5, 6, 7, FORMAT_VERSION)
 MAX_MANIFEST_BYTES = 5 * 1024 * 1024
 MAX_ASSET_BYTES = 64 * 1024 * 1024
 MAX_TOTAL_ASSET_BYTES = 256 * 1024 * 1024
@@ -70,7 +71,7 @@ def save_project(project: Project, path: str | Path) -> None:
                     "height": region.rect.height,
                 },
                 "background_image": background_path,
-                "locked": region.locked,
+                "lock": region.lock,
                 "visible": region.visible,
                 "opacity": region.opacity,
                 "fit": region.fit,
@@ -212,7 +213,7 @@ def load_project(path: str | Path) -> Project:
                         name=name,
                         id=region_id,
                         background_png=background,
-                        locked=_bool(entry, "locked", False),
+                        lock=_region_lock(entry, format_version),
                         visible=_bool(entry, "visible", True),
                         opacity=_opacity(entry),
                         fit=_fit_mode(entry),
@@ -385,6 +386,21 @@ def _opacity(value: Any) -> int:
     if isinstance(result, bool) or not isinstance(result, int) or not 0 <= result <= 100:
         raise TemplateError("模板不透明度必须是 0–100 的整数。")
     return result
+
+
+def _region_lock(entry: Any, format_version: int) -> str:
+    if not isinstance(entry, dict):
+        raise TemplateError("模板锁定字段格式无效。")
+    if format_version >= 8:
+        result = entry.get("lock", "none")
+        if result not in REGION_LOCK_MODES:
+            raise TemplateError("模板区域锁定模式不受支持。")
+        return result
+    # v1–v7 stored a single boolean; map True -> full lock (legacy behaviour).
+    legacy = entry.get("locked", False)
+    if not isinstance(legacy, bool):
+        raise TemplateError("模板字段 locked 必须是布尔值。")
+    return "full" if legacy else "none"
 
 
 def _fit_mode(value: Any) -> str:

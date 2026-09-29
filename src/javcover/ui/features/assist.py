@@ -211,4 +211,5 @@ class AssistMixin:
         check_button.clicked.connect(validate_configuration)
         buttons.accepted.connect(accept_validated)
         dialog.exec()
+        dialog.deleteLater()
 

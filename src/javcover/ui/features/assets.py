@@ -291,6 +291,7 @@ class AssetMixin:
         relist_categories()
         refresh()
         dialog.exec()
+        dialog.deleteLater()
 
     def _link_asset(self, element: DesignElement, path: Path) -> None:
         try:

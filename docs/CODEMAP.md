@@ -30,6 +30,7 @@ src/javcover/
     │   ├── view.py             # CoverView（工具、拖拽、缩放、拖放）
     │   ├── crop.py             # CropOverlay（绘制）+ CropTool（画布裁剪状态机）
     │   ├── handles.py          # draw_handles / handle_points（圆形屏幕恒定选择手柄）
+    │   ├── guide_interaction.py # GuideInteraction + draw_guides（共享标尺拖出/拖动/预览/绘制）
     │   └── image_editor.py     # ImageEditor（QGraphicsView：标尺/参考线/平移/裁剪/吸附/缩放）
     ├── widgets/                # 通用控件
     │   ├── panel.py            # PanelDock / PanelTitleBar（卡片模板）
@@ -87,8 +88,9 @@ app.main
 - `services/assist.py`：`suggest_color_blocks`、`recognize_japanese_text(..., cancel_event)`、`list_tesseract_languages`、`resolve_tesseract`。
 - `services/psd_import.py`：`import_psd`、`rasterize_psd`、`import_psd_overlay`。
 - `services/template_io.py`：`save_project` / `load_project`，`FORMAT_VERSION = 7`，读 v1–v7。
-- `ui/canvas/scene.py` / `items.py` / `view.py` / `crop.py` / `handles.py` / `image_editor.py`：场景、图元、交互视图、画布裁剪工具、共享选择手柄、非模态图片编辑器（QGraphicsView）。
-- `ui/editor_tab.py` / `ui/features/editing.py`：中央标签页系统——封面画布为标签 0，双击图片图层/区域背景打开“编辑”标签（可切换、非模态），`EditorTab` 用 `RulerFrame` 提供标尺/参考线并显示光标坐标与选区尺寸；切换标签会选中对应区域/图层使右侧卡片动态显示；`ImageEditor` 支持平移/裁剪/吸附/滚轮缩放/中右键平移；应用时写回并关闭标签。
+- `ui/canvas/scene.py` / `items.py` / `view.py` / `crop.py` / `handles.py` / `guide_interaction.py` / `image_editor.py`：场景、图元、交互视图、画布裁剪工具、共享选择手柄、共享参考线交互与绘制、非模态图片编辑器（QGraphicsView）。
+- `ui/editor_tab.py` / `ui/features/editing.py`：中央标签页系统——封面画布为标签 0，双击图片图层/区域背景打开“编辑”标签（可切换、非模态），`EditorTab` 用 `RulerFrame` 提供标尺/参考线并显示光标坐标与选区尺寸；切换标签会隐藏区域/图层面板并让参考线面板切换到该标签的参考线（`CoverView`/`ImageEditor` 各自持有 `GuideInteraction`）；`ImageEditor` 支持平移/裁剪/吸附/滚轮缩放/中右键平移；应用时写回并关闭标签。
+- 区域锁定 `Region.lock`（`none`/`position`/`full`）：位置锁只禁移动/缩放，全锁连背景与样式都禁；`template_io` v8 写入 `lock`，v1–v7 的布尔 `locked=True` 映射为 `full`（`region.locked`/`region.content_locked` 为只读属性）。
 - `ui/widgets/*`、`ui/dialogs/*`：通用控件与对话框（见目录树）。
 - `ui/features/*`：见目录树。
 

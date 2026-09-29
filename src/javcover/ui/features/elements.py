@@ -269,9 +269,12 @@ class ElementPanelMixin:
 
     def add_text_element(self) -> None:
         dialog = TextElementDialog(self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        values = dialog.values()
+        dialog.deleteLater()
+        if not accepted:
             return
-        text, family, size, color, outline_color, outline_width, vertical = dialog.values()
+        text, family, size, color, outline_color, outline_width, vertical = values
         if not text.strip():
             self._error("文字内容为空", "请输入要放置到封面的文字。")
             return
@@ -306,9 +309,12 @@ class ElementPanelMixin:
         if element is None or element.kind != "text" or element.locked:
             return
         dialog = TextElementDialog(self, element)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        values = dialog.values()
+        dialog.deleteLater()
+        if not accepted:
             return
-        text, family, size, color, outline_color, outline_width, vertical = dialog.values()
+        text, family, size, color, outline_color, outline_width, vertical = values
         if not text.strip() or not QColor(color).isValid() or not QColor(outline_color).isValid():
             self._error("文字设置无效", "请填写文字，并为填充色和描边色输入有效颜色。")
             return

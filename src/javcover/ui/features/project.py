@@ -116,9 +116,12 @@ class ProjectMixin:
             self._setting_int("canvas/defaultWidth", 1200, 1, 100_000),
             self._setting_int("canvas/defaultHeight", 800, 1, 100_000),
         )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        values = dialog.values()
+        dialog.deleteLater()
+        if not accepted:
             return
-        width, height, shape = dialog.values()
+        width, height, shape = values
         if width * height > MAX_CANVAS_PIXELS:
             self._error("画布尺寸过大", "画布最多支持 1 亿像素，请减小宽度或高度。")
             return
