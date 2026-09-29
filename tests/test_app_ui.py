@@ -136,19 +136,22 @@ class MainWindowStyleTests(unittest.TestCase):
                 self.assertIn(
                     "设置", [action.text() for action in window.menuBar().actions()]
                 )
-                rail = window.findChild(QToolBar, "canvasToolRail")
-                self.assertIsNotNone(rail)
-                self.assertEqual(rail.orientation(), Qt.Orientation.Vertical)
-                self.assertEqual(
-                    rail.toolButtonStyle(), Qt.ToolButtonStyle.ToolButtonIconOnly
+                self.assertIsNotNone(window.tool_rail)
+                self.assertTrue(
+                    window.tool_rail.features()
+                    & QDockWidget.DockWidgetFeature.DockWidgetMovable
                 )
-                self.assertTrue(all(not action.icon().isNull() for action in rail.actions() if not action.isSeparator()))
+                tool_buttons = window.tool_buttons
+                self.assertEqual(len(tool_buttons), 7)
+                self.assertTrue(
+                    all(not button.defaultAction().icon().isNull() for button in tool_buttons.values())
+                )
                 options = window.findChild(QToolBar, "viewOptionsToolbar")
                 self.assertIsNotNone(options)
                 self.assertFalse(
                     any("新建" in action.text() or "打开" in action.text() for action in options.actions())
                 )
-                self.assertEqual(len(window.findChildren(QDockWidget)), 3)
+                self.assertEqual(len(window.findChildren(QDockWidget)), 4)
                 self.assertEqual(len(window.findChildren(QScrollArea)), 3)
                 self.assertEqual(
                     set(window.inspector_card_scroll_areas),
@@ -167,7 +170,7 @@ class MainWindowStyleTests(unittest.TestCase):
                     for button in window.findChildren(QToolButton)
                     if button.property("javcoverAnimated")
                 ]
-                self.assertEqual(len(animated_buttons), 6)
+                self.assertEqual(len(animated_buttons), 7)
                 self.assertTrue(
                     all(button.iconSize().width() == 18 for button in animated_buttons)
                 )
@@ -1062,6 +1065,93 @@ class MainWindowStyleTests(unittest.TestCase):
             _asset_display_name(Path("abcdef0123456789abcdef0123456789_标 题.psd")),
             "标 题",
         )
+
+    def test_new_canvas_dialog_preset_sets_shape(self) -> None:
+        from javcover.ui.dialogs import NewCanvasDialog
+
+        dialog = NewCanvasDialog(None, 1200, 800)
+        try:
+            names = [dialog.preset.itemText(i) for i in range(dialog.preset.count())]
+            disc_index = next(
+                i for i, name in enumerate(names) if "大光盘" in name
+            )
+            dialog.preset.setCurrentIndex(disc_index)
+            self.assertEqual(dialog.values(), (1417, 1417, "disc"))
+        finally:
+            dialog.close()
+
+    def test_toggling_region_visibility_keeps_scroll(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            window = MainWindow(
+                settings=QSettings(
+                    str(Path(directory) / "ui.ini"), QSettings.Format.IniFormat
+                )
+            )
+            window.resize(860, 520)
+            window.show()
+            self.app.processEvents()
+            for index in range(30):
+                window.project.regions.append(
+                    Region(rect=Rect(0, 0, 10, 10), name=f"r{index}")
+                )
+            window.view.refresh_overlays()
+            window._refresh_region_list()
+            self.app.processEvents()
+            try:
+                bar = window.region_list.verticalScrollBar()
+                self.assertGreater(bar.maximum(), 0)
+                bar.setValue(bar.maximum() // 2)
+                before = bar.value()
+                region = window.project.regions[3]
+                window._toggle_region_visible(region.id)
+                self.app.processEvents()
+                self.assertEqual(window.region_list.verticalScrollBar().value(), before)
+            finally:
+                window.dirty = False
+                window.close()
+
+    def test_scrub_spinbox_drag_changes_value(self) -> None:
+        from javcover.ui.scrub import ScrubSpinBox
+
+        spin = ScrubSpinBox()
+        spin.setRange(0, 1000)
+        spin.setSingleStep(1)
+        spin.setValue(10)
+        spin.resize(140, 26)
+        spin.show()
+        self.app.processEvents()
+        try:
+            QTest.mousePress(spin, Qt.MouseButton.LeftButton, pos=QPoint(10, 13))
+            QTest.mouseMove(spin, QPoint(10, 13), 10)
+            QTest.mouseMove(spin, QPoint(90, 13), 10)
+            QTest.mouseRelease(spin, Qt.MouseButton.LeftButton, pos=QPoint(90, 13))
+            self.assertGreater(spin.value(), 10)
+        finally:
+            spin.close()
+
+    def test_image_edit_dialog_crops(self) -> None:
+        from PySide6.QtCore import QRectF
+
+        from javcover.image_ops import decode_png
+        from javcover.ui.image_edit import ImageEditDialog
+
+        image = QImage(40, 20, QImage.Format.Format_ARGB32)
+        image.fill(QColor("#336699"))
+        dialog = ImageEditDialog(
+            None, image, QSize(40, 20), "stretch", (0, 0),
+            allow_pan=False, allow_crop=True, title="t",
+        )
+        try:
+            dialog.preview.mode = "crop"
+            dialog.preview.crop = QRectF(5, 5, 10, 10)
+            dialog.accept()
+            cropped = dialog.cropped()
+            self.assertIsNotNone(cropped)
+            png, rect = cropped
+            self.assertEqual(decode_png(png).width(), 10)
+            self.assertEqual(rect, QRectF(5, 5, 10, 10))
+        finally:
+            dialog.close()
 
     def test_grid_spin_buttons_step_and_respect_one_minimum(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

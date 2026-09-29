@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QApplication
 
-from javcover.image_ops import compose_project, encode_png
+from javcover.image_ops import compose_project, crop_image_to_rect, decode_png, encode_png
 from javcover.models import DesignElement, Project, Rect, Region
 
 
@@ -169,6 +169,29 @@ class ImageCompositionTests(unittest.TestCase):
         result = compose_project(project)
         self.assertEqual(result.pixelColor(0, 0), QColor("#0000ff"))
         self.assertEqual(result.pixelColor(3, 3), QColor("#ff0000"))
+
+    def test_disc_canvas_masks_corners(self) -> None:
+        project = Project(
+            width=8,
+            height=8,
+            base_png=solid_png(8, 8, QColor("#ff0000")),
+            shape="disc",
+        )
+        result = compose_project(project)
+        self.assertEqual(result.pixelColor(0, 0).alpha(), 0)
+        self.assertEqual(result.pixelColor(4, 4).alpha(), 255)
+
+    def test_crop_image_to_rect_returns_sub_image(self) -> None:
+        image = QImage(6, 6, QImage.Format.Format_ARGB32)
+        image.fill(QColor("#112233"))
+        from PySide6.QtCore import QRectF
+
+        png, rect = crop_image_to_rect(
+            image, QRectF(0, 0, 6, 6), "stretch", QRectF(1, 2, 3, 3)
+        )
+        cropped = decode_png(png)
+        self.assertEqual((cropped.width(), cropped.height()), (3, 3))
+        self.assertEqual(rect, QRectF(1, 2, 3, 3))
 
     def test_text_element_renders_to_the_requested_color(self) -> None:
         project = Project(

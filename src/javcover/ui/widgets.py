@@ -15,6 +15,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtCore import (
+    QEasingCurve,
     QEvent,
     QLibraryInfo,
     QObject,
@@ -119,38 +120,36 @@ class _ToolButtonFeedback(QObject):
     def __init__(self, button: QToolButton) -> None:
         super().__init__(button)
         self.button = button
+        self._hovered = False
         self.shadow = QGraphicsDropShadowEffect(button)
         self.shadow.setBlurRadius(0)
         self.shadow.setOffset(0, 0)
-        self.shadow.setColor(QColor(20, 28, 36, 95))
+        self.shadow.setColor(QColor(20, 28, 36, 70))
         button.setGraphicsEffect(self.shadow)
         self._blur_animation = QPropertyAnimation(self.shadow, b"blurRadius", self)
-        self._blur_animation.setDuration(160)
-        self._offset_animation = QPropertyAnimation(self.shadow, b"yOffset", self)
-        self._offset_animation.setDuration(160)
+        self._blur_animation.setDuration(240)
+        self._blur_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         button.toggled.connect(lambda _checked: self._animate_state())
         button.installEventFilter(self)
         self._animate_state()
 
     def eventFilter(self, watched: object, event: QEvent) -> bool:
-        if watched is self.button and event.type() in (
-            QEvent.Type.Enter,
-            QEvent.Type.Leave,
-        ):
-            self._animate_state()
+        if watched is self.button:
+            if event.type() == QEvent.Type.Enter:
+                self._hovered = True
+                self._animate_state()
+            elif event.type() == QEvent.Type.Leave:
+                self._hovered = False
+                self._animate_state()
         return False
 
     def _animate_state(self) -> None:
         selected = self.button.isChecked()
-        hovered = self.button.underMouse()
+        target = 6.0 if selected else (3.0 if self._hovered else 0.0)
         self._blur_animation.stop()
-        self._offset_animation.stop()
         self._blur_animation.setStartValue(self.shadow.blurRadius())
-        self._blur_animation.setEndValue(12.0 if selected else (5.0 if hovered else 0.0))
-        self._offset_animation.setStartValue(self.shadow.yOffset())
-        self._offset_animation.setEndValue(3.0 if selected else 0.0)
+        self._blur_animation.setEndValue(target)
         self._blur_animation.start()
-        self._offset_animation.start()
 
 
 class _WindowControlButton(QToolButton):

@@ -257,6 +257,41 @@ class TemplateIoTests(unittest.TestCase):
         self.assertEqual(restored.elements[0].blend_mode, "normal")
         self.assertIsNone(restored.elements[0].region_id)
 
+    def test_round_trips_canvas_shape_and_background_offset(self) -> None:
+        project = Project(
+            width=200,
+            height=200,
+            shape="disc",
+            regions=[
+                Region(
+                    rect=Rect(0, 0, 50, 50),
+                    name="盘面",
+                    bg_dx=7,
+                    bg_dy=-9,
+                )
+            ],
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "disc.javcover"
+            save_project(project, path)
+            restored = load_project(path)
+        self.assertEqual(restored.shape, "disc")
+        self.assertEqual(restored.regions[0].bg_dx, 7)
+        self.assertEqual(restored.regions[0].bg_dy, -9)
+
+    def test_round_trips_named_guides(self) -> None:
+        project = Project(
+            width=100,
+            height=100,
+            guides=[Guide("x", 30, "中缝"), Guide("y", 50)],
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "guides.javcover"
+            save_project(project, path)
+            restored = load_project(path)
+        self.assertEqual(restored.guides[0], Guide("x", 30, "中缝"))
+        self.assertEqual(restored.guides[1].name, "")
+
     def test_failed_save_leaves_no_temporary_files(self) -> None:
         project = Project(width=10, height=10)
         with tempfile.TemporaryDirectory() as directory:

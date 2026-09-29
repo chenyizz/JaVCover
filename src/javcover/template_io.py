@@ -19,10 +19,11 @@ from javcover.models import (
     Region,
     REGION_FIT_MODES,
     BLEND_MODES,
+    CANVAS_SHAPES,
 )
 
-FORMAT_VERSION = 6
-SUPPORTED_VERSIONS = (1, 2, 3, 4, 5, FORMAT_VERSION)
+FORMAT_VERSION = 7
+SUPPORTED_VERSIONS = (1, 2, 3, 4, 5, 6, FORMAT_VERSION)
 MAX_MANIFEST_BYTES = 5 * 1024 * 1024
 MAX_ASSET_BYTES = 64 * 1024 * 1024
 MAX_TOTAL_ASSET_BYTES = 256 * 1024 * 1024
@@ -38,10 +39,17 @@ class TemplateError(ValueError):
 def save_project(project: Project, path: str | Path) -> None:
     manifest: dict[str, Any] = {
         "format_version": FORMAT_VERSION,
-        "canvas": {"width": project.width, "height": project.height},
+        "canvas": {
+            "width": project.width,
+            "height": project.height,
+            "shape": project.shape,
+        },
         "base_image": "assets/base.png" if project.base_png else None,
         "regions": [],
-        "guides": [{"axis": guide.axis, "position": guide.position} for guide in project.guides],
+        "guides": [
+            {"axis": guide.axis, "position": guide.position, "name": guide.name}
+            for guide in project.guides
+        ],
         "elements": [],
     }
     assets: dict[str, bytes] = {}
@@ -67,6 +75,8 @@ def save_project(project: Project, path: str | Path) -> None:
                 "opacity": region.opacity,
                 "fit": region.fit,
                 "blend_mode": region.blend_mode,
+                "bg_dx": region.bg_dx,
+                "bg_dy": region.bg_dy,
             }
         )
     for element in project.elements:
@@ -147,6 +157,9 @@ def load_project(path: str | Path) -> Project:
             height = _positive_int(canvas, "height")
             if width * height > MAX_CANVAS_PIXELS:
                 raise TemplateError("模板画布尺寸超过安全上限。")
+            shape = canvas.get("shape", "rect") if isinstance(canvas, dict) else "rect"
+            if shape not in CANVAS_SHAPES:
+                raise TemplateError("模板画布形状不受支持。")
             if not isinstance(manifest.get("regions"), list) or not isinstance(
                 manifest.get("guides"), list
             ):
@@ -160,7 +173,7 @@ def load_project(path: str | Path) -> Project:
             if sum(info.file_size for info in archive.infolist()) > MAX_TOTAL_ASSET_BYTES:
                 raise TemplateError("模板文件展开后超过安全上限。")
 
-            project = Project(width=width, height=height)
+            project = Project(width=width, height=height, shape=shape)
             base_path = manifest.get("base_image")
             if base_path is not None:
                 project.base_png = _read_asset(archive, _asset_path(base_path))
@@ -204,6 +217,8 @@ def load_project(path: str | Path) -> Project:
                         opacity=_opacity(entry),
                         fit=_fit_mode(entry),
                         blend_mode=_blend_mode(entry),
+                        bg_dx=_signed_int(entry, "bg_dx"),
+                        bg_dy=_signed_int(entry, "bg_dy"),
                     )
                 )
 
@@ -214,7 +229,10 @@ def load_project(path: str | Path) -> Project:
                 limit = width if entry["axis"] == "x" else height
                 if not 0 <= position <= limit:
                     raise TemplateError("参考线超出画布范围。")
-                project.guides.append(Guide(entry["axis"], position))
+                name = entry.get("name", "")
+                if not isinstance(name, str) or len(name) > 256:
+                    raise TemplateError("参考线名称格式无效。")
+                project.guides.append(Guide(entry["axis"], position, name))
 
             seen_elements: set[str] = set()
             for entry in manifest.get("elements", []):
@@ -384,6 +402,15 @@ def _blend_mode(value: Any) -> str:
     result = value.get("blend_mode", "normal")
     if result not in BLEND_MODES:
         raise TemplateError("模板混合模式不受支持。")
+    return result
+
+
+def _signed_int(value: Any, key: str, default: int = 0) -> int:
+    if not isinstance(value, dict):
+        raise TemplateError("模板数值字段格式无效。")
+    result = value.get(key, default)
+    if isinstance(result, bool) or not isinstance(result, int) or not -1_000_000 <= result <= 1_000_000:
+        raise TemplateError(f"模板字段 {key} 必须是有效整数。")
     return result
 
 

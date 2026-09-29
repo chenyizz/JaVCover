@@ -34,10 +34,13 @@ JAVCover/
 │   └── ui/
 │       ├── __init__.py
 │       ├── canvas.py           # CoverScene / RegionItem / DesignElementItem / CoverView
-│       ├── dialogs.py          # PreferencesDialog / TextElementDialog
+│       ├── dialogs.py          # PreferencesDialog / TextElementDialog / NewCanvasDialog
+│       ├── flow_layout.py      # FlowLayout（工具面板自动折行）
+│       ├── image_edit.py       # ImageEditDialog（平移/裁剪专用编辑窗口）
 │       ├── main_window.py      # MainWindow（菜单、面板、项目读写、批量等）
+│       ├── scrub.py            # ScrubSpinBox（可拖动改值）
 │       ├── widgets.py          # _ToolButtonFeedback / _WindowControlButton / _DelayedToolTip
-│       └── worker.py           # _BackgroundWorker（QThread）
+│       └── worker.py           # _BackgroundWorker（QThread，可取消）
 ├── tests/
 │   ├── test_app_ui.py
 │   ├── test_assist.py
@@ -95,10 +98,10 @@ tests/
 ### `src/javcover/models.py`
 
 - `Rect`：源图像像素坐标整数矩形、边界裁切（`bounded`）与限制在外层矩形内（`bounded_within`，供关联区域图层使用）、拖拽坐标归一化。
-- `Region`：有稳定 ID、名称、矩形、可选区域背景 PNG、`locked`/`visible` 状态、`opacity`（0–100）及背景 `fit`（`cover`/`contain`/`stretch`）。
+- `Region`：有稳定 ID、名称、矩形、可选区域背景 PNG、`locked`/`visible` 状态、`opacity`（0–100）、背景 `fit`（`cover`/`contain`/`stretch`）、`blend_mode` 与背景平移 `bg_dx`/`bg_dy`。
 - `DesignElement`：内嵌 PNG 图片或文字内容，以及像素坐标和基础文字样式；含 `locked`/`visible`/`opacity`/`blend_mode` 与可选 `region_id`（关联区域，元素被限制在该区域矩形内）；图片可携带 `asset_name`/`asset_kind`/`asset_hash`，记录来源素材以便刷新。
-- `Guide`：垂直 `x` 或水平 `y` 参考线。
-- `Project`：画布尺寸、底图、区域、参考线和设计图层。
+- `Guide`：垂直 `x` 或水平 `y` 参考线，带可选 `name` 名称。
+- `Project`：画布尺寸与形状（`shape`：`rect`/`disc`）、底图、区域、参考线和设计图层。
 - `snap_rect(...)`：吸附到画布边、参考线、邻区边/中心或网格。
 
 ### `src/javcover/ui/`（原 app.py 拆分）
@@ -107,15 +110,18 @@ tests/
 - `ui/dialogs.py`：`PreferencesDialog`、`TextElementDialog`。
 - `ui/widgets.py`：`_ToolButtonFeedback`、`_WindowControlButton`、`_DelayedToolTip`。
 - `ui/worker.py`：`_BackgroundWorker`。
+- `ui/scrub.py`：`ScrubSpinBox`（拖动框体改值的数字框，供不透明度/网格/尺寸等复用）。
+- `ui/image_edit.py`：`ImageEditDialog`——双击区域/图层打开，平移图片、可拖边/角裁剪（框外虚化 + 对齐网格），Enter 应用。`_Preview` 负责绘制与交互。
+- `ui/flow_layout.py`：`FlowLayout`——按宽度自动折行的布局，用于工具面板（窄时单列、拉宽时多列）。
 - `ui/main_window.py`：`MainWindow`（下列符号除特别注明外均在此文件）。
 - `app.py`：仅保留 `main()`、`_startup_path()` 并再导出 `MainWindow`/`CoverView`/`CoverScene`/`RegionItem`/`DesignElementItem`/`PreferencesDialog`/`TextElementDialog`/`format_output_name` 以兼容旧导入。
 
 以下符号按上述文件分布：
 
-- `CoverScene`：前景网格、参考线、参考线拖动预览，以及可选的印刷参考线（出血/安全区）叠加。
+- `CoverScene`：前景网格、参考线、参考线拖动预览，以及可选的印刷参考线（出血/安全区）叠加。参考线绘制跨越整个可见视图（不裁剪到画布），始终延伸到标尺边缘。
 - `RegionItem` / `DesignElementItem`：区域和图层预览、边框、选中控制点；均可按 `opacity`、`blend_mode` 绘制、按 `visible` 隐藏，`locked` 时只显示灰色虚线框不显示手柄。文字预览调用 `image_ops.paint_text_element`，区域背景调用 `paint_region_background`，与导出使用同一渲染路径。区域名标签只在选中或悬停时显示并裁剪在区域矩形内，避免色块候选框名称重影。选中区域为黑色描边 + 黄色实线 + 半透明填充，选中图层为黑色描边 + 亮青实线，便于与 1px 网格区分。
 - `main()`：启动时安装 `qtbase_zh_CN` QTranslator，使标准对话框按钮（保存/放弃/取消/确定等）本地化为中文。
-- `CoverView`：左键选框/对象移动与八向调整（角手柄按住 Shift 等比缩放）、右键/中键平移、滚轮缩放（缩放修饰键由 `wheel_zoom_modifier` 控制：none/ctrl/alt/shift/disabled）、参考线操作；接受图片/PSD 拖放并发 `filesDropped`；`set_project(preserve_view=True)` 供撤销/重做保留视图；`_constrain_element_rect` / `reclamp_linked_elements` 把关联区域的图层限制在区域内；`_align_rect` / `set_alignment_guides` 在移动时向画布/区域/其它图层中心与边缘吸附并显示紫色对齐线。锁定区域/图层不出手柄、不响应移动/缩放。使用 `FullViewportUpdate` 避免增删候选框时的残影。
+- `CoverView`：左键选框/对象移动与八向调整（角手柄按住 Shift 等比缩放）、右键/中键平移、滚轮缩放（缩放修饰键由 `wheel_zoom_modifier` 控制：none/ctrl/alt/shift/disabled）、参考线操作；`crop_mode` 下拖动裁剪图片图层/区域背景，Ctrl+拖动平移区域背景（`_begin_crop`/`_apply_crop`/`bgpan`）；接受图片/PSD 拖放并发 `filesDropped`；`set_project(preserve_view=True)` 供撤销/重做保留视图；`_constrain_element_rect` / `reclamp_linked_elements` 把关联区域的图层限制在区域内；`_align_rect` / `set_alignment_guides` 在移动时向画布/区域/其它图层中心与边缘吸附并显示紫色对齐线。手柄按屏幕像素固定大小绘制，避免放缩后难点中。锁定区域/图层不出手柄、不响应移动/缩放。使用 `FullViewportUpdate` 避免增删候选框时的残影。
 - `_startup_path` / `MainWindow.open_path`：读取命令行/拖到 exe 传入的 `.javcover` 或图片路径并打开（配合安装脚本的可选文件关联）。
 - `_BackgroundWorker` / `MainWindow._run_background`：以 `QThread` + 模态 `QProgressDialog`（带“取消”）执行 OCR、PSD 导入、导出、CMYK、批量；work 回调接收 `threading.Event`，置位后协作者抛 `TaskCancelled`；OCR 用 `Popen` 轮询并终止子进程。进行中禁止关闭主窗口。
 - `_apply_ocr_candidates`：在 UI 线程裁剪 OCR 候选为画布内区域并建立候选框。
@@ -131,9 +137,11 @@ tests/
 - `duplicate_selected_region` / `_rename_region_from_list`：复制区域（新 id、偏移、选中）、双击列表重命名区域。
 - `_apply_icc_profile`：导出时（若设置了 `export/iccProfile`）用 `QColorSpace.fromIccProfile` 给图像附加颜色空间。
 - `export_cmyk` / `_render_cmyk`：用 Pillow 将合成图转 CMYK（可选 `export/cmykProfile` 经 ImageCms 转换并嵌入），保存 TIFF/JPEG；Pillow 缺失时提示 `.[cmyk]`。
-- `_create_toolbar` / `_create_tool_rail`：工具条引用与 `toggleViewAction` 加入“视图”菜单；`_restore_user_interface_state` 启动时强制显示被旧布局隐藏的工具条。
+- `_create_toolbar` / `_create_tool_rail`：工具条引用与 `toggleViewAction` 加入“视图”菜单；`_create_tool_rail` 现构建**单列紧凑的可停靠/浮动“工具”卡片面板**（选择/框选/裁剪/色块/OCR/文字/素材）；`_restore_user_interface_state` 启动时强制显示被旧布局隐藏的工具条。
+- `edit_selected_image` / `_on_edit_requested`：双击画布图片图层/区域背景或按 `E` 打开 `ImageEditDialog`，应用平移偏移或裁剪结果。
+- `_refresh_region_list` / `_refresh_element_list`：重建列表时保留滚动条位置，锁定/显隐后不跳回。
 - `format_output_name`：批量导出文件名占位符 `{name}` / `{index}` / `{date}` 展开。
-- `PreferencesDialog`：提供常规选项和可配置 QAction 快捷键，检测重复键位并支持清空/恢复默认。
+- `PreferencesDialog`：提供常规选项和可配置 QAction 快捷键，检测重复键位并支持清空/恢复默认。`NewCanvasDialog`：常规/光盘画布预设与自定义宽高、形状。`TextElementDialog`：文字图层设置。
 - `_new_inspector_card` / `_bind_panel_action`：将区域、参考线、图层各自建成独立 `QDockWidget`（可停靠任意边、浮动、关闭、嵌套/标签），内部为竖向 `QSplitter`（上半为控件 `QScrollArea` 区、下半为列表，可拖动改变列表高度）；对应“视图”菜单动作与面板可见性双向同步，布局由 `QMainWindow.saveState`/`restoreState` 持久化。
 - `_refresh_region_list` / `_refresh_element_list`：列表项文本留空、名称只由行内 `QLabel` 显示，避免列表文字重影；行内含锁定/显隐按钮。
 - `_ToolButtonFeedback`：工具按钮悬停/选中时以短时阴影动画显示状态。
@@ -155,14 +163,15 @@ tests/
 - `encode_png(...)` / `decode_png(...)`：内存 PNG 资源转换/验证。
 - `build_text_path(...)` / `paint_text_element(...)`：按设定字号构建文字路径并居中裁剪绘制，供画布预览与导出共用，含描边。
 - `composition_mode(...)`：混合模式名（normal/multiply/screen/overlay/darken/lighten/add）到 `QPainter.CompositionMode` 的映射，供区域背景与图层绘制共用。
-- `paint_region_background(...)`：按区域 `fit`（cover/contain/stretch）、`opacity` 与 `blend_mode` 绘制区域背景，供画布与导出共用。
-- `compose_project(...)`：依序合成底图、可见区域背景、可见图片元素和文字元素；隐藏区域背景与隐藏图层都会从导出中排除，区域/图层按各自不透明度与混合模式绘制。文字使用当前安装字体、按设定字号在元素框内居中渲染并裁剪（不拉伸，与画布预览一致）；JPEG 由 UI 铺白底并按 `export/jpegQuality`（1–100，默认 95）保存。
+- `paint_region_background(...)`：按区域 `fit`（cover/contain/stretch）、`opacity`、`blend_mode` 与 `bg_dx/bg_dy` 偏移绘制区域背景，供画布与导出共用。
+- `image_rect_mapping(...)` / `crop_image_to_rect(...)`：计算图片在目标矩形内的绘制/源矩形映射（支持 `offset` 平移），并按场景矩形裁剪图片（返回新 PNG 与新矩形），供裁剪工具与编辑窗口使用。
+- `compose_project(...)`：依序合成底图、可见区域背景、可见图片元素和文字元素；隐藏区域背景与隐藏图层都会从导出中排除，区域/图层按各自不透明度与混合模式绘制。`shape == "disc"` 时用 `CompositionMode_Clear` 清除圆外区域。文字使用当前安装字体、按设定字号在元素框内居中渲染并裁剪（不拉伸，与画布预览一致）；JPEG 由 UI 铺白底并按 `export/jpegQuality`（1–100，默认 95）保存。
 
 ### `src/javcover/template_io.py`
 
 - `save_project(...)`：写入 ZIP：JSON 清单及自包含的底图、区域和图片图层资源。
 - `load_project(...)`：验证版本、资源路径、尺寸、ID、颜色和字段。
-- 当前写入 `FORMAT_VERSION = 6`，可读取版本 1–6；版本 1 无设计元素，版本 2 无素材来源字段，版本 3 无 `opacity`/`fit`/图层 `locked`/`visible`，版本 4 无 `blend_mode`，版本 5 无元素 `region_id`。区域 `locked`/`visible`/`opacity`/`fit`/`blend_mode` 与元素 `asset_*`/`locked`/`visible`/`opacity`/`blend_mode`/`region_id` 均为向后兼容可选字段。
+- 当前写入 `FORMAT_VERSION = 7`，可读取版本 1–7；版本 1 无设计元素，版本 2 无素材来源字段，版本 3 无 `opacity`/`fit`/图层 `locked`/`visible`，版本 4 无 `blend_mode`，版本 5 无元素 `region_id`，版本 6 无画布 `shape` 与区域 `bg_dx`/`bg_dy`。区域 `locked`/`visible`/`opacity`/`fit`/`blend_mode` 与元素 `asset_*`/`locked`/`visible`/`opacity`/`blend_mode`/`region_id` 均为向后兼容可选字段。
 
 ## 主数据流
 

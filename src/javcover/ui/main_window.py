@@ -68,6 +68,7 @@ from PySide6.QtWidgets import (
     QGraphicsScene,
     QGraphicsView,
     QGraphicsDropShadowEffect,
+    QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QKeySequenceEdit,
@@ -126,7 +127,9 @@ from javcover.constants import (
     format_output_name,
 )
 from javcover.ui.canvas import CoverScene, CoverView, DesignElementItem, RegionItem
-from javcover.ui.dialogs import PreferencesDialog, TextElementDialog
+from javcover.ui.dialogs import NewCanvasDialog, PreferencesDialog, TextElementDialog
+from javcover.ui.flow_layout import FlowLayout
+from javcover.ui.image_edit import ImageEditDialog
 from javcover.ui.widgets import (
     _DelayedToolTip,
     _ToolButtonFeedback,
@@ -134,6 +137,7 @@ from javcover.ui.widgets import (
 )
 from javcover.ui.worker import _BackgroundWorker
 from javcover.tasks import TaskCancelled
+from javcover.ui.scrub import ScrubSpinBox
 
 _ASSET_PREFIX = re.compile(r"^[0-9a-f]{32}_")
 
@@ -192,7 +196,9 @@ class MainWindow(QMainWindow):
             QToolBar#canvasToolRail QToolButton:checked:hover {
                 background: #c6dbff; border: 2px solid #1d4ed8; border-radius: 5px;
             }
-            QDockWidget::title { background: #eef1f4; padding: 5px 8px; }
+            QDockWidget::title { background: #e7ebee; padding: 5px 8px; border-bottom: 1px solid #d7dde2; }
+            #toolRailTitle { background: #e7ebee; border-bottom: 1px solid #d7dde2; }
+            QToolButton#toolCard { padding: 0px; border: 1px solid transparent; border-radius: 4px; }
             QFrame#inspectorCard { background: #ffffff; border: 1px solid #e1e5e9; border-radius: 6px; }
             QLabel#inspectorCardTitle { color: #526171; font-weight: 600; }
             QScrollArea#inspectorScrollArea { border: none; background: transparent; }
@@ -207,7 +213,8 @@ class MainWindow(QMainWindow):
             QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: #eceff1; }
             QPushButton { border: 1px solid #d9dee3; border-radius: 5px; padding: 5px 9px; background: #ffffff; }
             QPushButton:hover { background: #f3f5f6; border-color: #bfc7ce; }
-            QSplitter::handle { background: #f4f6f8; }
+            QSplitter::handle { background: #e2e6ea; }
+            QSplitter::handle:hover { background: #d3d9df; }
             QSplitter::handle:vertical { height: 7px; }
             QSplitter::handle:horizontal { width: 7px; }
             QToolButton#windowControl { background: transparent; border: none; border-radius: 5px; }
@@ -217,7 +224,7 @@ class MainWindow(QMainWindow):
             QWidget#regionListRow[active="true"] { background: #edf3f7; }
             QToolButton#regionRowAction { background: transparent; border: none; border-radius: 4px; padding: 2px; }
             QToolButton#regionRowAction:hover { background: #edf0f2; }
-            QStatusBar { background: #ffffff; border: none; padding: 3px 6px; border-bottom-left-radius: 5px; border-bottom-right-radius: 5px; }
+            QStatusBar { background: #ffffff; border: none; border-top: 1px solid #dce1e5; padding: 3px 6px; border-bottom-left-radius: 5px; border-bottom-right-radius: 5px; }
             QStatusBar::item { border: none; }
             QStatusBar QLabel { padding: 4px 2px; }
             """
@@ -239,6 +246,7 @@ class MainWindow(QMainWindow):
         self.view.editFinished.connect(self._finish_edit)
         self.view.pointerMoved.connect(self._show_pointer)
         self.view.filesDropped.connect(self._on_files_dropped)
+        self.view.editRequested.connect(self._on_edit_requested)
         self.ruler_frame = RulerFrame(self.view)
         self.ruler_frame.guideRequested.connect(self.add_guide_at)
         self.ruler_frame.guidePreviewChanged.connect(self.view.set_guide_preview)
@@ -327,6 +335,10 @@ class MainWindow(QMainWindow):
         self._action(
             self.layer_menu, "添加文字图层…", self.add_text_element,
             QKeySequence("Ctrl+Shift+T"), "add-text"
+        )
+        self._action(
+            self.layer_menu, "编辑所选图片/背景…", self.edit_selected_image,
+            QKeySequence("E"), "edit-element"
         )
         self._action(
             self.layer_menu, "放置 PSD 标题素材…", self.place_psd_title_asset,
@@ -693,7 +705,7 @@ class MainWindow(QMainWindow):
         self.grid_snap_checkbox.setToolTip("独立于常规磁吸，将选框位置吸附到网格细分线")
         self.grid_snap_checkbox.toggled.connect(self._set_grid_snapping)
         toolbar.addWidget(self.grid_snap_checkbox)
-        self.grid_size = QSpinBox()
+        self.grid_size = ScrubSpinBox()
         self.grid_size.setRange(1, 1000)
         self.grid_size.setSingleStep(1)
         self.grid_size.setValue(self._setting_int("canvas/gridSize", 100, 1, 1000))
@@ -702,7 +714,7 @@ class MainWindow(QMainWindow):
         self.grid_size.setObjectName("gridSizeSpinBox")
         self.grid_size.valueChanged.connect(self._refresh_grid)
         toolbar.addWidget(self.grid_size)
-        self.grid_subdivisions = QSpinBox()
+        self.grid_subdivisions = ScrubSpinBox()
         self.grid_subdivisions.setRange(1, 20)
         self.grid_subdivisions.setSingleStep(1)
         self.grid_subdivisions.setValue(
@@ -721,17 +733,32 @@ class MainWindow(QMainWindow):
         self._set_grid_visibility(self.grid_checkbox.isChecked())
 
     def _create_tool_rail(self) -> None:
-        toolbar = QToolBar("画布工具")
-        toolbar.setObjectName("canvasToolRail")
-        toolbar.setOrientation(Qt.Orientation.Vertical)
-        toolbar.setMovable(False)
-        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        toolbar.setIconSize(QSize(18, 18))
-        self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, toolbar)
-        self.tool_rail = toolbar
-        rail_toggle = toolbar.toggleViewAction()
-        rail_toggle.setText("画布工具条")
+        dock = QDockWidget("工具", self)
+        dock.setObjectName("toolRailDock")
+        dock.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            | QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+        panel = QWidget(dock)
+        flow = FlowLayout(panel, margin=2, hspacing=2, vspacing=2)
+        dock.setWidget(panel)
+        # Slim, Photoshop-like title bar (keeps drag-to-move but not wide).
+        title = QWidget(dock)
+        title.setObjectName("toolRailTitle")
+        title.setFixedHeight(14)
+        title.setToolTip("工具（可拖动）")
+        dock.setTitleBarWidget(title)
+        self.tool_rail = dock
+        self.tool_rail_dock = dock
+        self.tool_buttons: dict[str, QToolButton] = {}
+        rail_toggle = dock.toggleViewAction()
+        rail_toggle.setText("工具面板")
         self.view_menu.addAction(rail_toggle)
+
         select_action = self._tool_action(
             "选择", "click.svg", "选择并移动区域或图层", lambda: None,
             "select-tool", QKeySequence("V")
@@ -742,25 +769,36 @@ class MainWindow(QMainWindow):
             "region-tool", QKeySequence("R")
         )
         region_action.setCheckable(True)
-        draw_enabled = self._setting_bool("canvas/drawMode", True)
-        self.view.draw_mode = draw_enabled
-        select_action.setChecked(not draw_enabled)
-        region_action.setChecked(draw_enabled)
+        crop_action = self._tool_action(
+            "裁剪", "scissors.svg", "在区域/图层内拖动裁剪图片", lambda: None,
+            "crop-tool", QKeySequence("C")
+        )
+        crop_action.setCheckable(True)
         group = QActionGroup(self)
         group.setExclusive(True)
-        group.addAction(select_action)
-        group.addAction(region_action)
+        for action in (select_action, region_action, crop_action):
+            group.addAction(action)
+        draw_enabled = self._setting_bool("canvas/drawMode", True)
+        crop_enabled = self._setting_bool("canvas/cropMode", False)
+        self.view.draw_mode = draw_enabled and not crop_enabled
+        self.view.crop_mode = crop_enabled
+        if crop_enabled:
+            crop_action.setChecked(True)
+        elif draw_enabled:
+            region_action.setChecked(True)
+        else:
+            select_action.setChecked(True)
         region_action.toggled.connect(
-            lambda checked: checked and self._set_draw_mode(True)
+            lambda checked: checked and self._set_canvas_tool("region")
         )
         select_action.toggled.connect(
-            lambda checked: checked and self._set_draw_mode(False)
+            lambda checked: checked and self._set_canvas_tool("select")
         )
-        for action in (select_action, region_action):
-            toolbar.addAction(action)
-            self._set_delayed_tooltip(toolbar, action)
-        toolbar.addSeparator()
-        for text, icon_name, tooltip, callback, shortcut_id, shortcut in (
+        crop_action.toggled.connect(
+            lambda checked: checked and self._set_canvas_tool("crop")
+        )
+
+        other_tools = [
             (
                 "色块", "color-filter.svg", "分析封面中的大色块",
                 self.run_color_block_assist, "color-block", QKeySequence("Ctrl+Shift+B")
@@ -777,13 +815,31 @@ class MainWindow(QMainWindow):
                 "素材", "pic-one.svg", "打开本机图片素材库",
                 self.open_asset_library, "asset-library-tool", QKeySequence()
             ),
-        ):
-            action = self._tool_action(
-                text, icon_name, tooltip, callback, shortcut_id, shortcut
+        ]
+        actions = [select_action, region_action, crop_action]
+        for text, icon_name, tooltip, callback, shortcut_id, shortcut in other_tools:
+            actions.append(
+                self._tool_action(text, icon_name, tooltip, callback, shortcut_id, shortcut)
             )
-            toolbar.addAction(action)
-            self._set_delayed_tooltip(toolbar, action)
-        self._tool_actions = (select_action, region_action)
+        for index, action in enumerate(actions):
+            button = QToolButton(panel)
+            button.setObjectName("toolCard")
+            button.setDefaultAction(action)
+            button.setFixedSize(34, 34)
+            button.setIconSize(QSize(18, 18))
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            button.setProperty("javcoverAnimated", True)
+            button.setAccessibleName(action.text())
+            _ToolButtonFeedback(button)
+            _DelayedToolTip(button, str(action.data() or action.text()))
+            flow.addWidget(button)
+            self.tool_buttons[action.text()] = button
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        self._tool_actions = (select_action, region_action, crop_action)
+
+    def _set_canvas_tool(self, tool: str) -> None:
+        self.view.draw_mode = tool == "region"
+        self.view.crop_mode = tool == "crop"
 
     def _setting_bool(self, key: str, default: bool) -> bool:
         value = self.settings.value(key, default)
@@ -819,6 +875,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("window/geometry", self.saveGeometry())
         self.settings.setValue("window/state", self.saveState())
         self.settings.setValue("canvas/drawMode", self.view.draw_mode)
+        self.settings.setValue("canvas/cropMode", self.view.crop_mode)
         self.settings.setValue("canvas/snapping", self.snap_checkbox.isChecked())
         self.settings.setValue("canvas/gridVisible", self.grid_checkbox.isChecked())
         self.settings.setValue("canvas/gridSnapping", self.grid_snap_checkbox.isChecked())
@@ -854,19 +911,6 @@ class MainWindow(QMainWindow):
         action.setShortcut(shortcut)
         self._register_shortcut(action, shortcut_id, shortcut)
         return action
-
-    def _set_delayed_tooltip(
-        self, toolbar: QToolBar, action: QAction
-    ) -> None:
-        button = toolbar.widgetForAction(action)
-        if not isinstance(button, QToolButton):
-            return
-        button.setFixedSize(34, 34)
-        button.setIconSize(QSize(18, 18))
-        button.setAccessibleName(action.text())
-        button.setProperty("javcoverAnimated", True)
-        _ToolButtonFeedback(button)
-        _DelayedToolTip(button, str(action.data() or ""))
 
     def _create_inspector_dock(self) -> None:
         self.inspector_card_scroll_areas: dict[str, QScrollArea] = {}
@@ -941,7 +985,7 @@ class MainWindow(QMainWindow):
             ("width", "宽"),
             ("height", "高"),
         ):
-            spin = QSpinBox()
+            spin = ScrubSpinBox()
             spin.setRange(0, 100_000)
             spin.setSuffix(" px")
             spin.editingFinished.connect(self._geometry_changed)
@@ -964,7 +1008,7 @@ class MainWindow(QMainWindow):
         blend_form.addRow("混合模式", self.region_blend)
         layout.addLayout(blend_form)
         opacity_form = QFormLayout()
-        self.region_opacity = QSpinBox()
+        self.region_opacity = ScrubSpinBox()
         self.region_opacity.setRange(0, 100)
         self.region_opacity.setSuffix(" %")
         self.region_opacity.editingFinished.connect(self._region_opacity_changed)
@@ -1001,10 +1045,14 @@ class MainWindow(QMainWindow):
             button.clicked.connect(lambda _checked=False, a=axis: self.add_guide(a))
             buttons.addWidget(button)
         layout.addLayout(buttons)
-        self.guide_position = QSpinBox()
+        self.guide_position = ScrubSpinBox()
         self.guide_position.setRange(0, 100_000)
         self.guide_position.setSuffix(" px")
         self.guide_position.editingFinished.connect(self._move_guide)
+        layout.addWidget(QLabel("参考线名称"))
+        self.guide_name = QLineEdit()
+        self.guide_name.editingFinished.connect(self._rename_guide)
+        layout.addWidget(self.guide_name)
         layout.addWidget(self.guide_position)
         delete_button = QPushButton("删除参考线")
         delete_button.clicked.connect(self.remove_guide)
@@ -1033,7 +1081,7 @@ class MainWindow(QMainWindow):
             ("width", "宽"),
             ("height", "高"),
         ):
-            spin = QSpinBox()
+            spin = ScrubSpinBox()
             spin.setRange(0, 100_000)
             spin.setSuffix(" px")
             spin.editingFinished.connect(self._element_geometry_changed)
@@ -1047,7 +1095,7 @@ class MainWindow(QMainWindow):
         self.element_visible.toggled.connect(self._element_visible_toggled)
         layout.addWidget(self.element_visible)
         opacity_form = QFormLayout()
-        self.element_opacity = QSpinBox()
+        self.element_opacity = ScrubSpinBox()
         self.element_opacity.setRange(0, 100)
         self.element_opacity.setSuffix(" %")
         self.element_opacity.editingFinished.connect(self._element_opacity_changed)
@@ -1208,6 +1256,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_region_list(self) -> None:
         selected = self.view.selected_id
+        scroll = self.region_list.verticalScrollBar().value()
         self.region_list.blockSignals(True)
         self.region_list.clear()
         self.region_row_controls: dict[str, tuple[QToolButton, QToolButton]] = {}
@@ -1253,6 +1302,7 @@ class MainWindow(QMainWindow):
         if selected_item:
             self.region_list.setCurrentItem(selected_item)
         self.region_list.blockSignals(False)
+        self.region_list.verticalScrollBar().setValue(scroll)
         self._update_region_controls(selected)
 
     def _region_row_button(self, icon_name: str, tooltip: str) -> QToolButton:
@@ -1303,7 +1353,8 @@ class MainWindow(QMainWindow):
         self.guide_list.clear()
         for guide in self.project.guides:
             axis = "垂直" if guide.axis == "x" else "水平"
-            self.guide_list.addItem(f"{axis} · {guide.position} px")
+            label = f"{guide.name} · " if guide.name else ""
+            self.guide_list.addItem(f"{label}{axis} · {guide.position} px")
         if self.project.guides:
             self.guide_list.setCurrentRow(min(max(selected, 0), len(self.project.guides) - 1))
         self.guide_list.blockSignals(False)
@@ -1311,6 +1362,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_element_list(self) -> None:
         selected_id = self.view.selected_element_id
+        scroll = self.element_list.verticalScrollBar().value()
         self.element_list.blockSignals(True)
         self.element_list.clear()
         selected_item = None
@@ -1354,6 +1406,7 @@ class MainWindow(QMainWindow):
         if selected_item:
             self.element_list.setCurrentItem(selected_item)
         self.element_list.blockSignals(False)
+        self.element_list.verticalScrollBar().setValue(scroll)
         self._update_element_controls(selected_id)
 
     def _toggle_element_locked(self, element_id: str) -> None:
@@ -1745,6 +1798,75 @@ class MainWindow(QMainWindow):
         element.vertical = vertical
         self.view.refresh_overlays()
         self.view.select_element(element.id)
+        self._finish_edit()
+
+    def _on_edit_requested(self, _kind: str, _target_id: str) -> None:
+        self.edit_selected_image()
+
+    def edit_selected_image(self) -> None:
+        element = self.view._element(self.view.selected_element_id)
+        region = self._selected_region()
+        image = None
+        frame = None
+        fit = "stretch"
+        offset = (0, 0)
+        target: tuple[str, object] | None = None
+        allow_pan, allow_crop = False, True
+        if element is not None and element.kind == "image" and element.png:
+            image = decode_png(element.png)
+            frame = QSize(element.width, element.height)
+            target = ("element", element)
+        elif region is not None and region.background_png:
+            image = decode_png(region.background_png)
+            frame = QSize(region.rect.width, region.rect.height)
+            fit = region.fit
+            offset = (region.bg_dx, region.bg_dy)
+            target = ("region", region)
+            allow_pan = True
+        if target is None or image is None or frame is None:
+            self._error("无可编辑图片", "请选择带图片的图层，或有背景的区域。")
+            return
+        dialog = ImageEditDialog(
+            self,
+            image,
+            frame,
+            fit,
+            offset,
+            allow_pan=allow_pan,
+            allow_crop=allow_crop,
+            title="编辑图片",
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        cropped = dialog.cropped()
+        new_offset = dialog.offset()
+        self._begin_edit()
+        kind, obj = target
+        if kind == "element":
+            if cropped is not None:
+                png, rect = cropped
+                obj.png = png
+                obj.rect = Rect(
+                    obj.x + round(rect.x()),
+                    obj.y + round(rect.y()),
+                    max(1, round(rect.width())),
+                    max(1, round(rect.height())),
+                ).bounded(self.project.width, self.project.height)
+        else:
+            if cropped is not None:
+                png, rect = cropped
+                obj.background_png = png
+                obj.rect = Rect(
+                    obj.rect.x + round(rect.x()),
+                    obj.rect.y + round(rect.y()),
+                    max(1, round(rect.width())),
+                    max(1, round(rect.height())),
+                ).bounded(self.project.width, self.project.height)
+                obj.bg_dx = 0
+                obj.bg_dy = 0
+            else:
+                obj.bg_dx, obj.bg_dy = new_offset
+        self.view.refresh_overlays()
         self._finish_edit()
 
     def _rename_element(self) -> None:
@@ -2451,12 +2573,27 @@ class MainWindow(QMainWindow):
     def _guide_selected(self, row: int) -> None:
         enabled = 0 <= row < len(self.project.guides)
         self.guide_position.setEnabled(enabled)
+        self.guide_name.setEnabled(enabled)
         if enabled:
             guide = self.project.guides[row]
             self.guide_position.setMaximum(self.project.width if guide.axis == "x" else self.project.height)
             self.guide_position.setValue(guide.position)
+            self.guide_name.setText(guide.name)
         else:
             self.guide_position.setValue(0)
+            self.guide_name.clear()
+
+    def _rename_guide(self) -> None:
+        row = self.guide_list.currentRow()
+        if not 0 <= row < len(self.project.guides):
+            return
+        old = self.project.guides[row]
+        name = self.guide_name.text().strip()
+        if name == old.name:
+            return
+        self._begin_edit()
+        self.project.guides[row] = Guide(old.axis, old.position, name)
+        self._finish_edit()
 
     def _move_guide(self) -> None:
         row = self.guide_list.currentRow()
@@ -2467,7 +2604,7 @@ class MainWindow(QMainWindow):
         if position == old.position:
             return
         self._begin_edit()
-        self.project.guides[row] = Guide(old.axis, position)
+        self.project.guides[row] = Guide(old.axis, position, old.name)
         self.view.refresh_overlays()
         self._finish_edit()
 
@@ -2483,30 +2620,21 @@ class MainWindow(QMainWindow):
     def new_project(self) -> None:
         if not self._confirm_discard():
             return
-        width, accepted = QInputDialog.getInt(
+        dialog = NewCanvasDialog(
             self,
-            "新建画布",
-            "宽度（px）",
             self._setting_int("canvas/defaultWidth", 1200, 1, 100_000),
-            1,
-            100_000,
-        )
-        if not accepted:
-            return
-        height, accepted = QInputDialog.getInt(
-            self,
-            "新建画布",
-            "高度（px）",
             self._setting_int("canvas/defaultHeight", 800, 1, 100_000),
-            1,
-            100_000,
         )
-        if not accepted:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+        width, height, shape = dialog.values()
         if width * height > MAX_CANVAS_PIXELS:
             self._error("画布尺寸过大", "画布最多支持 1 亿像素，请减小宽度或高度。")
             return
-        self._replace_project(Project(width, height), None)
+        self.settings.setValue("canvas/defaultWidth", width)
+        self.settings.setValue("canvas/defaultHeight", height)
+        self.settings.sync()
+        self._replace_project(Project(width, height, shape=shape), None)
 
     def open_image(self) -> None:
         if not self._confirm_discard():
@@ -3183,9 +3311,6 @@ class MainWindow(QMainWindow):
             painter.setPen(QPen(QColor("#d6dbe0"), 1))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPath(path)
-
-    def _set_draw_mode(self, enabled: bool) -> None:
-        self.view.draw_mode = enabled
 
     def _set_snapping(self, enabled: bool) -> None:
         self.view.snapping = enabled

@@ -99,6 +99,7 @@ from javcover.image_ops import (
     ImageError,
     compose_project,
     composition_mode,
+    crop_image_to_rect,
     decode_png,
     encode_png,
     load_image,
@@ -127,6 +128,7 @@ class CoverScene(QGraphicsScene):
         self.preview_guide: Guide | None = None
         self.canvas_width = 0
         self.canvas_height = 0
+        self.canvas_shape = "rect"
         self.print_guides_visible = False
         self.bleed_margin = 0
         self.safe_margin = 0
@@ -136,54 +138,75 @@ class CoverScene(QGraphicsScene):
         super().drawForeground(painter, rect)
         canvas = QRectF(0, 0, self.canvas_width, self.canvas_height)
         visible = rect.intersected(canvas)
-        if visible.isEmpty():
-            return
         painter.save()
-        painter.setClipRect(canvas)
-        scale = max(painter.transform().m11(), 0.01)
-        major_screen_spacing = self.grid_size * scale
-        minor_spacing = self.grid_size / max(1, self.grid_subdivisions)
-        if self.grid_visible and major_screen_spacing >= 2.5:
-            draw_minor = minor_spacing * scale >= 5
-            minor_pen = QPen(QColor(15, 19, 27, 110), 0)
-            minor_light_pen = QPen(QColor(255, 255, 255, 90), 0)
-            major_pen = QPen(QColor(15, 19, 27, 170), 0)
-            major_light_pen = QPen(QColor(255, 255, 255, 200), 0)
-            for pen in (minor_pen, minor_light_pen, major_pen, major_light_pen):
-                pen.setWidth(1)
+        if not visible.isEmpty():
+            painter.setClipRect(canvas)
+            scale = max(painter.transform().m11(), 0.01)
+            major_screen_spacing = self.grid_size * scale
+            minor_spacing = self.grid_size / max(1, self.grid_subdivisions)
+            if self.grid_visible and major_screen_spacing >= 2.5:
+                draw_minor = minor_spacing * scale >= 5
+                minor_pen = QPen(QColor(15, 19, 27, 110), 0)
+                minor_light_pen = QPen(QColor(255, 255, 255, 90), 0)
+                major_pen = QPen(QColor(15, 19, 27, 170), 0)
+                major_light_pen = QPen(QColor(255, 255, 255, 200), 0)
+                for pen in (minor_pen, minor_light_pen, major_pen, major_light_pen):
+                    pen.setWidth(1)
+                    pen.setCosmetic(True)
+                if draw_minor:
+                    painter.setPen(minor_pen)
+                    self._draw_grid_lines(
+                        painter, visible, minor_spacing, self.grid_size, False
+                    )
+                    painter.setPen(minor_light_pen)
+                    self._draw_grid_lines(
+                        painter, visible, minor_spacing, self.grid_size, False
+                    )
+                painter.setPen(major_pen)
+                self._draw_grid_lines(
+                    painter, visible, self.grid_size, self.grid_size, True
+                )
+                painter.setPen(major_light_pen)
+                self._draw_grid_lines(
+                    painter, visible, self.grid_size, self.grid_size, True
+                )
+            if self.canvas_shape == "disc":
+                diameter = min(self.canvas_width, self.canvas_height)
+                circle = QRectF(
+                    (self.canvas_width - diameter) / 2,
+                    (self.canvas_height - diameter) / 2,
+                    diameter,
+                    diameter,
+                )
+                outer = QPainterPath()
+                outer.addRect(canvas)
+                inner = QPainterPath()
+                inner.addEllipse(circle)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(0, 0, 0, 90))
+                painter.drawPath(outer.subtracted(inner))
+                pen = QPen(QColor("#c04bff"), 1)
                 pen.setCosmetic(True)
-            if draw_minor:
-                painter.setPen(minor_pen)
-                self._draw_grid_lines(
-                    painter, visible, minor_spacing, self.grid_size, False
-                )
-                painter.setPen(minor_light_pen)
-                self._draw_grid_lines(
-                    painter, visible, minor_spacing, self.grid_size, False
-                )
-            painter.setPen(major_pen)
-            self._draw_grid_lines(
-                painter, visible, self.grid_size, self.grid_size, True
-            )
-            painter.setPen(major_light_pen)
-            self._draw_grid_lines(
-                painter, visible, self.grid_size, self.grid_size, True
-            )
+                painter.setPen(pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawEllipse(circle)
+            if self.print_guides_visible:
+                self._draw_print_guides(painter)
+        painter.restore()
+        # Guides span the whole exposed viewport (not just the canvas) so they
+        # always reach the rulers and are never clipped by dock resizing.
         for guide in self.guides:
-            self._draw_guide(painter, visible, guide, QColor("#00d9ff"))
-        if self.print_guides_visible:
-            self._draw_print_guides(painter)
+            self._draw_guide(painter, rect, guide, QColor("#00d9ff"))
         if self.preview_guide:
-            self._draw_guide(painter, visible, self.preview_guide, QColor("#ffd54a"))
+            self._draw_guide(painter, rect, self.preview_guide, QColor("#ffd54a"))
         for axis, position in self.alignment_guides:
             pen = QPen(QColor("#c04bff"), 0, Qt.PenStyle.SolidLine)
             pen.setCosmetic(True)
             painter.setPen(pen)
             if axis == "x":
-                painter.drawLine(QPointF(position, visible.top()), QPointF(position, visible.bottom()))
+                painter.drawLine(QPointF(position, rect.top()), QPointF(position, rect.bottom()))
             else:
-                painter.drawLine(QPointF(visible.left(), position), QPointF(visible.right(), position))
-        painter.restore()
+                painter.drawLine(QPointF(rect.left(), position), QPointF(rect.right(), position))
 
     def _draw_print_guides(self, painter: QPainter) -> None:
         canvas = QRectF(0, 0, self.canvas_width, self.canvas_height)
@@ -252,6 +275,8 @@ class RegionItem(QGraphicsRectItem):
         self.opacity = region.opacity
         self.fit = region.fit
         self.blend_mode = region.blend_mode
+        self.bg_dx = region.bg_dx
+        self.bg_dy = region.bg_dy
         self.setRect(0, 0, region.rect.width, region.rect.height)
         self.setPos(region.rect.x, region.rect.y)
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
@@ -279,6 +304,7 @@ class RegionItem(QGraphicsRectItem):
                 self.fit,
                 self.opacity,
                 self.blend_mode,
+                (self.bg_dx, self.bg_dy),
             )
 
         color = QColor("#ffd400") if self.selected else QColor("#ff3b30")
@@ -318,6 +344,7 @@ class RegionItem(QGraphicsRectItem):
             painter.restore()
         if self.selected and not self.locked:
             painter.setBrush(color)
+            half = 3.5 / max(painter.worldTransform().m11(), 0.01)
             for point in (
                 bounds.topLeft(),
                 QPointF(bounds.center().x(), bounds.top()),
@@ -328,7 +355,7 @@ class RegionItem(QGraphicsRectItem):
                 bounds.bottomLeft(),
                 QPointF(bounds.left(), bounds.center().y()),
             ):
-                painter.drawRect(QRectF(point.x() - 3, point.y() - 3, 7, 7))
+                painter.drawRect(QRectF(point.x() - half, point.y() - half, half * 2, half * 2))
 
 
 class DesignElementItem(QGraphicsRectItem):
@@ -372,6 +399,7 @@ class DesignElementItem(QGraphicsRectItem):
                 return
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor("#00e0ff"))
+            half = 3.5 / max(painter.worldTransform().m11(), 0.01)
             for point in (
                 bounds.topLeft(),
                 QPointF(bounds.center().x(), bounds.top()),
@@ -382,7 +410,7 @@ class DesignElementItem(QGraphicsRectItem):
                 bounds.bottomLeft(),
                 QPointF(bounds.left(), bounds.center().y()),
             ):
-                painter.drawRect(QRectF(point.x() - 3, point.y() - 3, 7, 7))
+                painter.drawRect(QRectF(point.x() - half, point.y() - half, half * 2, half * 2))
 
 
 class CoverView(QGraphicsView):
@@ -394,6 +422,7 @@ class CoverView(QGraphicsView):
     pointerMoved = Signal(int, int)
     viewportChanged = Signal()
     filesDropped = Signal(list, object)
+    editRequested = Signal(str, str)
 
     def __init__(self) -> None:
         self.cover_scene = CoverScene()
@@ -406,6 +435,11 @@ class CoverView(QGraphicsView):
         self.selected_id: str | None = None
         self.selected_element_id: str | None = None
         self.draw_mode = True
+        self.crop_mode = False
+        self._crop_target: tuple[str, str] | None = None
+        self._crop_origin = QPointF()
+        self._bg_origin = QPointF()
+        self._bg_offsets = (0, 0)
         self.snapping = True
         self.grid_visible = True
         self.grid_snapping = False
@@ -459,6 +493,7 @@ class CoverView(QGraphicsView):
         self.image_item = None
         self.cover_scene.canvas_width = project.width
         self.cover_scene.canvas_height = project.height
+        self.cover_scene.canvas_shape = project.shape
         self.cover_scene.guides = project.guides
         if project.base_png:
             base = decode_png(project.base_png)
@@ -505,6 +540,7 @@ class CoverView(QGraphicsView):
         self.cover_scene.guides = self.project.guides
         self.cover_scene.canvas_width = self.project.width
         self.cover_scene.canvas_height = self.project.height
+        self.cover_scene.canvas_shape = self.project.shape
         self.cover_scene.grid_visible = self.grid_visible
         self.cover_scene.grid_size = self.grid_size
         self.cover_scene.grid_subdivisions = self.grid_subdivisions
@@ -704,6 +740,25 @@ class CoverView(QGraphicsView):
         self.filesDropped.emit(paths, scene_pos)
         event.acceptProposedAction()
 
+    def mouseDoubleClickEvent(self, event: object) -> None:
+        if self.project is None or event.button() != Qt.MouseButton.LeftButton:
+            super().mouseDoubleClickEvent(event)
+            return
+        point = self._clamp_to_canvas(self.mapToScene(event.position().toPoint()))
+        element = self._element_at(point)
+        if element is not None and element.kind == "image" and element.png:
+            self.select_element(element.id)
+            self.editRequested.emit("element", element.id)
+            event.accept()
+            return
+        region = self._region_at(point)
+        if region is not None and region.background_png:
+            self.select_region(region.id)
+            self.editRequested.emit("region", region.id)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
     def _clear_drag_state(self) -> None:
         self._drag_kind = None
         self._original_rect = None
@@ -711,7 +766,94 @@ class CoverView(QGraphicsView):
         self._dragged_guide_index = None
         self._original_guide = None
         self._shift_down = False
+        self._crop_target = None
         self.set_alignment_guides([])
+
+    def _crop_bounds(self) -> QRectF | None:
+        if self._crop_target is None:
+            return None
+        kind, target_id = self._crop_target
+        if kind == "element":
+            element = self._element(target_id)
+            return None if element is None else QRectF(
+                element.x, element.y, element.width, element.height
+            )
+        region = self._region(target_id)
+        return None if region is None else QRectF(
+            region.rect.x, region.rect.y, region.rect.width, region.rect.height
+        )
+
+    def _begin_crop(self, point: QPointF) -> bool:
+        element = self._element(self.selected_element_id)
+        region = self._region(self.selected_id)
+        target: tuple[str, str] | None = None
+        if element is not None and element.kind == "image" and element.png:
+            target = ("element", element.id)
+        elif region is not None and region.background_png:
+            target = ("region", region.id)
+        if target is None:
+            return False
+        self.editStarted.emit()
+        self._crop_target = target
+        self._drag_kind = "crop"
+        self._crop_origin = point
+        self._preview = QGraphicsRectItem()
+        self._preview.setPen(QPen(QColor("#ffd400"), 0, Qt.PenStyle.DashLine))
+        self._preview.setBrush(QColor(255, 212, 0, 40))
+        self._preview.setZValue(11)
+        self._preview.setRect(QRectF(point, point))
+        self.cover_scene.addItem(self._preview)
+        return True
+
+    def _apply_crop(self, crop: QRectF) -> None:
+        if self._crop_target is None or self.project is None:
+            return
+        kind, target_id = self._crop_target
+        if kind == "element":
+            element = self._element(target_id)
+            if element is None or not element.png:
+                return
+            target = QRectF(element.x, element.y, element.width, element.height)
+            try:
+                png, new_rect = crop_image_to_rect(
+                    decode_png(element.png), target, "stretch", crop
+                )
+            except ImageError:
+                return
+            element.png = png
+            element.rect = Rect(
+                round(new_rect.x()),
+                round(new_rect.y()),
+                max(1, round(new_rect.width())),
+                max(1, round(new_rect.height())),
+            ).bounded(self.project.width, self.project.height)
+        else:
+            region = self._region(target_id)
+            if region is None or not region.background_png:
+                return
+            target = QRectF(
+                region.rect.x, region.rect.y, region.rect.width, region.rect.height
+            )
+            try:
+                png, new_rect = crop_image_to_rect(
+                    decode_png(region.background_png),
+                    target,
+                    region.fit,
+                    crop,
+                    (region.bg_dx, region.bg_dy),
+                )
+            except ImageError:
+                return
+            region.background_png = png
+            region.bg_dx = 0
+            region.bg_dy = 0
+            region.rect = Rect(
+                round(new_rect.x()),
+                round(new_rect.y()),
+                max(1, round(new_rect.width())),
+                max(1, round(new_rect.height())),
+            ).bounded(self.project.width, self.project.height)
+        self.refresh_overlays()
 
     def _cancel_drawing(self) -> None:
         if self._preview is not None:
@@ -734,6 +876,23 @@ class CoverView(QGraphicsView):
         py = min(max(0, round(scene_pos.y())), self.project.height)
         self.pointerMoved.emit(px, py)
 
+        if self._drag_kind == "crop" and self._preview is not None:
+            bounds = self._crop_bounds()
+            rect = QRectF(self._crop_origin, scene_pos).normalized()
+            if bounds is not None:
+                rect = rect.intersected(bounds)
+            self._preview.setRect(rect)
+            return
+        if self._drag_kind == "bgpan":
+            region = self._region(self.selected_id)
+            if region is not None:
+                dx = self._bg_offsets[0] + round(scene_pos.x() - self._bg_origin.x())
+                dy = self._bg_offsets[1] + round(scene_pos.y() - self._bg_origin.y())
+                if (dx, dy) != (region.bg_dx, region.bg_dy):
+                    region.bg_dx = dx
+                    region.bg_dy = dy
+                    self.cover_scene.update()
+            return
         if self._drag_kind == "guide" and self._dragged_guide_index is not None:
             old = self._original_guide
             if old is not None:
@@ -743,7 +902,9 @@ class CoverView(QGraphicsView):
                     self.project.width if old.axis == "x" else self.project.height,
                 )
                 if self.project.guides[self._dragged_guide_index].position != position:
-                    self.project.guides[self._dragged_guide_index] = Guide(old.axis, position)
+                    self.project.guides[self._dragged_guide_index] = Guide(
+                        old.axis, position, old.name
+                    )
                     self.cover_scene.guides = self.project.guides
                     self.cover_scene.update()
             return
@@ -776,9 +937,9 @@ class CoverView(QGraphicsView):
 
     def mousePressEvent(self, event: object) -> None:
         if event.button() in (Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton):
-            if self._drag_kind == "draw":
+            if self._drag_kind in ("draw", "crop"):
                 self._cancel_drawing()
-            elif self._drag_kind in ("move", "resize", "guide"):
+            elif self._drag_kind in ("move", "resize", "guide", "bgpan"):
                 self._clear_drag_state()
                 self.editFinished.emit()
             self._drag_kind = "pan"
@@ -793,6 +954,30 @@ class CoverView(QGraphicsView):
             super().mousePressEvent(event)
             return
         raw_scene_pos = self.mapToScene(event.position().toPoint())
+        if self.crop_mode:
+            if self._begin_crop(self._clamp_to_canvas(raw_scene_pos)):
+                event.accept()
+                return
+        if (
+            event.modifiers() & Qt.KeyboardModifier.ControlModifier
+            and not self.draw_mode
+            and not self.crop_mode
+        ):
+            region = self._region(self.selected_id)
+            scene_pos = self._clamp_to_canvas(raw_scene_pos)
+            if (
+                region is not None
+                and region.background_png
+                and not region.locked
+                and region.rect.x <= scene_pos.x() <= region.rect.right
+                and region.rect.y <= scene_pos.y() <= region.rect.bottom
+            ):
+                self.editStarted.emit()
+                self._drag_kind = "bgpan"
+                self._bg_origin = scene_pos
+                self._bg_offsets = (region.bg_dx, region.bg_dy)
+                event.accept()
+                return
         guide_index = self._guide_at(raw_scene_pos)
         if guide_index is not None:
             self.editStarted.emit()
@@ -855,6 +1040,21 @@ class CoverView(QGraphicsView):
             return
         if self.project is None or event.button() != Qt.MouseButton.LeftButton:
             super().mouseReleaseEvent(event)
+            return
+        if self._drag_kind == "crop":
+            if self._preview is not None:
+                crop = self._preview.rect().normalized()
+                self.cover_scene.removeItem(self._preview)
+                self._preview = None
+                self._apply_crop(crop)
+            self.editFinished.emit()
+            self._clear_drag_state()
+            event.accept()
+            return
+        if self._drag_kind == "bgpan":
+            self.editFinished.emit()
+            self._clear_drag_state()
+            event.accept()
             return
         if self._drag_kind == "draw":
             end = self._clamp_to_canvas(self.mapToScene(event.position().toPoint()))

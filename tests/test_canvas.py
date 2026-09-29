@@ -334,6 +334,28 @@ class CanvasInteractionTests(unittest.TestCase):
         self.assertIn("x", [axis for axis, _ in guides])
         self.assertIn("y", [axis for axis, _ in guides])
 
+    def test_crop_element_reduces_image_and_rect(self) -> None:
+        from javcover.image_ops import decode_png
+
+        image = QImage(40, 20, QImage.Format.Format_ARGB32)
+        image.fill(QColor("#336699"))
+        element = DesignElement(
+            kind="image",
+            x=10,
+            y=10,
+            width=40,
+            height=20,
+            name="e",
+            png=encode_png(image),
+        )
+        self.project.elements.append(element)
+        self.view.refresh_overlays()
+        self.view._crop_target = ("element", element.id)
+        self.view._apply_crop(QRectF(20, 15, 10, 10))
+        self.assertEqual(element.rect, Rect(20, 15, 10, 10))
+        self.assertEqual(decode_png(element.png).width(), 10)
+        self.assertEqual(decode_png(element.png).height(), 10)
+
     def test_grid_is_rendered_above_base_image(self) -> None:
         scene = CoverScene()
         scene.canvas_width = 100

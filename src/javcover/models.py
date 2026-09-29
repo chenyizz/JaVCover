@@ -7,6 +7,7 @@ from uuid import uuid4
 MAX_CANVAS_PIXELS = 100_000_000
 REGION_FIT_MODES = ("cover", "contain", "stretch")
 BLEND_MODES = ("normal", "multiply", "screen", "overlay", "darken", "lighten", "add")
+CANVAS_SHAPES = ("rect", "disc")
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +66,8 @@ class Region:
     opacity: int = 100
     fit: str = "cover"
     blend_mode: str = "normal"
+    bg_dx: int = 0
+    bg_dy: int = 0
 
 
 @dataclass(slots=True)
@@ -113,6 +116,7 @@ class DesignElement:
 class Guide:
     axis: Literal["x", "y"]
     position: int
+    name: str = ""
 
 
 @dataclass(slots=True)
@@ -123,6 +127,7 @@ class Project:
     regions: list[Region] = field(default_factory=list)
     guides: list[Guide] = field(default_factory=list)
     elements: list[DesignElement] = field(default_factory=list)
+    shape: str = "rect"
 
     def add_region(self, rect: Rect) -> Region:
         region = Region(rect=rect, name=f"区域 {len(self.regions) + 1}")

@@ -112,6 +112,7 @@ from javcover.psd_import import (
     rasterize_psd,
 )
 from javcover.template_io import TemplateError, load_project, save_project
+from javcover.ui.scrub import ScrubSpinBox
 
 
 class PreferencesDialog(QDialog):
@@ -150,23 +151,23 @@ class PreferencesDialog(QDialog):
         self.print_guides = QCheckBox("显示印刷参考线（出血/安全区）")
         self.print_guides.setChecked(bool(preferences["canvas/printGuidesVisible"]))
         general_form.addRow(self.print_guides)
-        self.bleed_margin = QSpinBox()
+        self.bleed_margin = ScrubSpinBox()
         self.bleed_margin.setRange(0, 100_000)
         self.bleed_margin.setSuffix(" px")
         self.bleed_margin.setValue(int(preferences["canvas/bleedMargin"]))
         general_form.addRow("出血（向内）", self.bleed_margin)
-        self.safe_margin = QSpinBox()
+        self.safe_margin = ScrubSpinBox()
         self.safe_margin.setRange(0, 100_000)
         self.safe_margin.setSuffix(" px")
         self.safe_margin.setValue(int(preferences["canvas/safeMargin"]))
         general_form.addRow("安全区（向内）", self.safe_margin)
 
-        self.grid_size = QSpinBox()
+        self.grid_size = ScrubSpinBox()
         self.grid_size.setRange(1, 1000)
         self.grid_size.setSuffix(" px")
         self.grid_size.setValue(int(preferences["canvas/gridSize"]))
         general_form.addRow("主网格间距", self.grid_size)
-        self.grid_subdivisions = QSpinBox()
+        self.grid_subdivisions = ScrubSpinBox()
         self.grid_subdivisions.setRange(1, 20)
         self.grid_subdivisions.setSuffix(" 分格")
         self.grid_subdivisions.setValue(int(preferences["canvas/gridSubdivisions"]))
@@ -183,12 +184,12 @@ class PreferencesDialog(QDialog):
         wheel_index = self.wheel_zoom.findData(str(preferences["canvas/wheelZoomModifier"]))
         self.wheel_zoom.setCurrentIndex(wheel_index if wheel_index >= 0 else 0)
         general_form.addRow("滚轮缩放方式", self.wheel_zoom)
-        self.canvas_width = QSpinBox()
+        self.canvas_width = ScrubSpinBox()
         self.canvas_width.setRange(1, 100_000)
         self.canvas_width.setSuffix(" px")
         self.canvas_width.setValue(int(preferences["canvas/defaultWidth"]))
         general_form.addRow("新建画布默认宽度", self.canvas_width)
-        self.canvas_height = QSpinBox()
+        self.canvas_height = ScrubSpinBox()
         self.canvas_height.setRange(1, 100_000)
         self.canvas_height.setSuffix(" px")
         self.canvas_height.setValue(int(preferences["canvas/defaultHeight"]))
@@ -202,7 +203,7 @@ class PreferencesDialog(QDialog):
         self.pasteboard_color_button.clicked.connect(self._choose_pasteboard_color)
         color_layout.addWidget(self.pasteboard_color_button)
         general_form.addRow("画布外围颜色", color_row)
-        self.jpeg_quality = QSpinBox()
+        self.jpeg_quality = ScrubSpinBox()
         self.jpeg_quality.setRange(1, 100)
         self.jpeg_quality.setSuffix(" %")
         self.jpeg_quality.setValue(int(preferences["export/jpegQuality"]))
@@ -374,14 +375,14 @@ class TextElementDialog(QDialog):
         self.text_edit = QPlainTextEdit(existing.text if existing else "")
         self.text_edit.setPlaceholderText("输入封面文字，可使用日文和多行文本")
         self.font_combo = QFontComboBox()
-        self.font_size = QSpinBox()
+        self.font_size = ScrubSpinBox()
         self.font_size.setRange(1, 512)
         self.font_size.setValue(existing.font_size if existing else 56)
         self.color = QLineEdit(existing.color if existing else "#ffffff")
         self.outline_color = QLineEdit(
             existing.outline_color if existing else "#161923"
         )
-        self.outline_width = QSpinBox()
+        self.outline_width = ScrubSpinBox()
         self.outline_width.setRange(0, 64)
         self.outline_width.setValue(existing.outline_width if existing else 2)
         self.vertical = QCheckBox("逐字竖排")
@@ -414,3 +415,76 @@ class TextElementDialog(QDialog):
         )
 
 
+
+CANVAS_PRESETS: list[tuple[str, int, int, str]] = [
+    ("电影 2K 横板", 2048, 1152, "rect"),
+    ("电影 4K 横板", 3840, 2160, "rect"),
+    ("海报 4K 竖版", 2160, 3840, "rect"),
+    ("A4 300dpi 横版", 3508, 2480, "rect"),
+    ("A4 300dpi 竖版", 2480, 3508, "rect"),
+    ("大光盘盘面 (120mm)", 1417, 1417, "disc"),
+    ("小光盘盘面 (80mm)", 945, 945, "disc"),
+    ("光盘封面 (方形)", 1417, 1417, "rect"),
+]
+
+
+class NewCanvasDialog(QDialog):
+    """Create a new canvas with regular-print or disc presets."""
+
+    def __init__(
+        self, parent: QWidget | None, default_width: int, default_height: int
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("新建画布")
+        self.setMinimumWidth(360)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+
+        self.preset = QComboBox()
+        self.preset.addItem("自定义", None)
+        for name, width, height, shape in CANVAS_PRESETS:
+            self.preset.addItem(name, (width, height, shape))
+        form.addRow("预设", self.preset)
+
+        self.shape = QComboBox()
+        self.shape.addItem("矩形（海报/封面）", "rect")
+        self.shape.addItem("圆形（光盘盘面）", "disc")
+        form.addRow("画布形状", self.shape)
+
+        self.width = ScrubSpinBox()
+        self.width.setRange(1, 100_000)
+        self.width.setSuffix(" px")
+        self.width.setValue(max(1, default_width))
+        form.addRow("宽度", self.width)
+
+        self.height = ScrubSpinBox()
+        self.height.setRange(1, 100_000)
+        self.height.setSuffix(" px")
+        self.height.setValue(max(1, default_height))
+        form.addRow("高度", self.height)
+
+        layout.addLayout(form)
+        hint = QLabel("圆形画布用于光盘盘面；导出时圆外区域透明（JPEG 为白）。")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.preset.currentIndexChanged.connect(self._preset_changed)
+
+    def _preset_changed(self, _index: int) -> None:
+        data = self.preset.currentData()
+        if data is None:
+            return
+        width, height, shape = data
+        self.width.setValue(width)
+        self.height.setValue(height)
+        index = self.shape.findData(shape)
+        self.shape.setCurrentIndex(index if index >= 0 else 0)
+
+    def values(self) -> tuple[int, int, str]:
+        return self.width.value(), self.height.value(), str(self.shape.currentData())

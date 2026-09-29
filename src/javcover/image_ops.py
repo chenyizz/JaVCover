@@ -38,6 +38,56 @@ def composition_mode(name: str) -> QPainter.CompositionMode:
     )
 
 
+def image_rect_mapping(
+    image: QImage, target: QRectF, fit: str, offset: tuple[int, int] = (0, 0)
+) -> tuple[QRectF, QRectF]:
+    """Return ``(drawn_rect, source_rect)`` mapping an image into ``target``."""
+    width, height = image.width(), image.height()
+    offset_x, offset_y = offset
+    if fit == "stretch":
+        return target, QRectF(0, 0, width, height)
+    if fit == "contain":
+        scale = min(target.width() / width, target.height() / height)
+        drawn_width, drawn_height = width * scale, height * scale
+        x = target.x() + (target.width() - drawn_width) / 2 + offset_x
+        y = target.y() + (target.height() - drawn_height) / 2 + offset_y
+        x = min(max(target.x(), x), target.x() + target.width() - drawn_width)
+        y = min(max(target.y(), y), target.y() + target.height() - drawn_height)
+        return QRectF(x, y, drawn_width, drawn_height), QRectF(0, 0, width, height)
+    scale = max(target.width() / width, target.height() / height)
+    source_width = target.width() / scale
+    source_height = target.height() / scale
+    source_x = (width - source_width) / 2 + offset_x * source_width / target.width()
+    source_y = (height - source_height) / 2 + offset_y * source_height / target.height()
+    source_x = min(max(0.0, source_x), width - source_width)
+    source_y = min(max(0.0, source_y), height - source_height)
+    return target, QRectF(source_x, source_y, source_width, source_height)
+
+
+def crop_image_to_rect(
+    image: QImage,
+    target: QRectF,
+    fit: str,
+    crop: QRectF,
+    offset: tuple[int, int] = (0, 0),
+) -> tuple[bytes, QRectF]:
+    """Crop ``image`` to ``crop`` (in target/scene coords), returning PNG + new rect."""
+    drawn, source = image_rect_mapping(image, target, fit, offset)
+    clipped = crop.normalized().intersected(drawn)
+    if clipped.width() < 1 or clipped.height() < 1:
+        raise ImageError("裁剪区域无效。")
+    factor_x = source.width() / drawn.width()
+    factor_y = source.height() / drawn.height()
+    source_x = source.x() + (clipped.x() - drawn.x()) * factor_x
+    source_y = source.y() + (clipped.y() - drawn.y()) * factor_y
+    source_w = max(1, round(clipped.width() * factor_x))
+    source_h = max(1, round(clipped.height() * factor_y))
+    sub = image.copy(
+        int(round(source_x)), int(round(source_y)), int(source_w), int(source_h)
+    )
+    return encode_png(sub), clipped
+
+
 def load_image(path: str | Path) -> QImage:
     reader = QImageReader(str(path))
     reader.setAutoTransform(True)
@@ -118,10 +168,32 @@ def compose_project(project: Project) -> QImage:
                 region.rect.x, region.rect.y, region.rect.width, region.rect.height
             )
             paint_region_background(
-                painter, image, target, region.fit, region.opacity, region.blend_mode
+                painter,
+                image,
+                target,
+                region.fit,
+                region.opacity,
+                region.blend_mode,
+                (region.bg_dx, region.bg_dy),
             )
         for element in project.elements:
             _draw_element(painter, element)
+        if project.shape == "disc":
+            diameter = min(project.width, project.height)
+            circle = QRectF(
+                (project.width - diameter) / 2,
+                (project.height - diameter) / 2,
+                diameter,
+                diameter,
+            )
+            outside = QPainterPath()
+            outside.addRect(QRectF(0, 0, project.width, project.height))
+            inner = QPainterPath()
+            inner.addEllipse(circle)
+            painter.setCompositionMode(
+                QPainter.CompositionMode.CompositionMode_Clear
+            )
+            painter.fillPath(outside.subtracted(inner), QColor(0, 0, 0, 255))
     finally:
         painter.end()
     return output
@@ -134,36 +206,33 @@ def paint_region_background(
     fit: str,
     opacity: int,
     blend_mode: str = "normal",
+    offset: tuple[int, int] = (0, 0),
 ) -> None:
     """Draw a region's background image into ``target`` using its fit mode."""
     painter.setCompositionMode(composition_mode(blend_mode))
     if opacity < 100:
         painter.setOpacity(max(0, opacity) / 100)
+    offset_x, offset_y = offset
     if fit == "stretch":
         painter.drawImage(target, image)
     elif fit == "contain":
         scale = min(target.width() / image.width(), target.height() / image.height())
         width = image.width() * scale
         height = image.height() * scale
-        painter.drawImage(
-            QRectF(
-                target.x() + (target.width() - width) / 2,
-                target.y() + (target.height() - height) / 2,
-                width,
-                height,
-            ),
-            image,
-        )
-    else:  # cover: fill and center-crop
+        x = target.x() + (target.width() - width) / 2 + offset_x
+        y = target.y() + (target.height() - height) / 2 + offset_y
+        x = min(max(target.x(), x), target.x() + target.width() - width)
+        y = min(max(target.y(), y), target.y() + target.height() - height)
+        painter.drawImage(QRectF(x, y, width, height), image)
+    else:  # cover: fill and center-crop, pannable via offset
         scale = max(target.width() / image.width(), target.height() / image.height())
         source_width = target.width() / scale
         source_height = target.height() / scale
-        source = QRectF(
-            (image.width() - source_width) / 2,
-            (image.height() - source_height) / 2,
-            source_width,
-            source_height,
-        )
+        source_x = (image.width() - source_width) / 2 + offset_x * source_width / target.width()
+        source_y = (image.height() - source_height) / 2 + offset_y * source_height / target.height()
+        source_x = min(max(0.0, source_x), image.width() - source_width)
+        source_y = min(max(0.0, source_y), image.height() - source_height)
+        source = QRectF(source_x, source_y, source_width, source_height)
         painter.save()
         painter.setClipRect(target)
         painter.drawImage(target, image, source)
