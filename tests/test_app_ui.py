@@ -21,7 +21,13 @@ from PySide6.QtWidgets import (
     QToolButton,
 )
 
-from javcover.app import MainWindow, PreferencesDialog, format_output_name
+from javcover.app import (
+    MainWindow,
+    PreferencesDialog,
+    _startup_path,
+    format_output_name,
+)
+from javcover.image_ops import encode_png
 from javcover.models import DesignElement, Project, Rect, Region
 
 
@@ -427,6 +433,7 @@ class MainWindowStyleTests(unittest.TestCase):
             dialog.pasteboard_color = "#d8e5f0"
             dialog._update_color_button()
             dialog.jpeg_quality.setValue(80)
+            dialog.wheel_zoom.setCurrentIndex(dialog.wheel_zoom.findData("ctrl"))
             dialog._shortcut_edits["fit-canvas"].setKeySequence(
                 QKeySequence("Ctrl+Shift+F")
             )
@@ -446,6 +453,7 @@ class MainWindowStyleTests(unittest.TestCase):
                 self.assertEqual(settings.value("canvas/defaultWidth"), 1400)
                 self.assertEqual(settings.value("canvas/defaultHeight"), 900)
                 self.assertEqual(settings.value("export/jpegQuality"), 80)
+                self.assertEqual(settings.value("canvas/wheelZoomModifier"), "ctrl")
             finally:
                 window.close()
 
@@ -856,7 +864,7 @@ class MainWindowStyleTests(unittest.TestCase):
             window._refresh_region_list()
             try:
                 with patch(
-                    "javcover.app.QInputDialog.getText",
+                    "javcover.ui.main_window.QInputDialog.getText",
                     return_value=("新名称", True),
                 ):
                     window._rename_region_from_list(window.region_list.item(0))
@@ -871,6 +879,75 @@ class MainWindowStyleTests(unittest.TestCase):
             "20260928_003_cover",
         )
         self.assertEqual(format_output_name("", "x", 1, "d"), "")
+
+    def test_zoom_shortcuts_and_asset_category_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            window = MainWindow(
+                settings=QSettings(
+                    str(Path(directory) / "ui.ini"), QSettings.Format.IniFormat
+                )
+            )
+            try:
+                self.assertIn("zoom-in", window._shortcut_bindings)
+                self.assertIn("zoom-out", window._shortcut_bindings)
+                category = window.asset_directory / "logos"
+                category.mkdir(parents=True, exist_ok=True)
+                asset = category / "abc123_logo.png"
+                art = QImage(8, 8, QImage.Format.Format_ARGB32)
+                art.fill(QColor("#123456"))
+                art.save(str(asset), "PNG")
+                self.assertEqual(window._asset_path_for(asset.name), asset)
+                element = DesignElement(
+                    kind="image",
+                    x=0,
+                    y=0,
+                    width=8,
+                    height=8,
+                    name="logo",
+                    png=b"x",
+                )
+                window._link_asset(element, asset)
+                self.assertEqual(element.asset_name, asset.name)
+            finally:
+                window.dirty = False
+                window.close()
+
+    def test_startup_path_detects_template_argument(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            template = Path(directory) / "t.javcover"
+            template.write_bytes(b"x")
+            self.assertEqual(_startup_path(["app", str(template)]), template)
+            self.assertIsNone(_startup_path(["app", "--flag"]))
+            self.assertIsNone(_startup_path(["app"]))
+
+    def test_color_assist_works_from_region_background_template(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            window = MainWindow(
+                settings=QSettings(
+                    str(Path(directory) / "ui.ini"), QSettings.Format.IniFormat
+                )
+            )
+            art = QImage(200, 100, QImage.Format.Format_ARGB32)
+            from PySide6.QtGui import QPainter as _QPainter
+
+            art.fill(QColor("#ff0000"))
+            painter = _QPainter(art)
+            painter.fillRect(100, 0, 100, 100, QColor("#0000ff"))
+            painter.end()
+            window.project.regions.append(
+                Region(
+                    rect=Rect(0, 0, 200, 100),
+                    name="封面",
+                    background_png=encode_png(art),
+                )
+            )
+            window.view.refresh_overlays()
+            try:
+                window.run_color_block_assist()
+                self.assertGreater(len(window.project.regions), 1)
+            finally:
+                window.dirty = False
+                window.close()
 
     def test_grid_spin_buttons_step_and_respect_one_minimum(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

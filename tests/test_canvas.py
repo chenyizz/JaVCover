@@ -322,6 +322,18 @@ class CanvasInteractionTests(unittest.TestCase):
         self.assertGreaterEqual(element.x, 0)
         self.assertLessEqual(element.x + element.width, 30)
 
+    def test_align_rect_snaps_center_to_canvas_center(self) -> None:
+        element = DesignElement(
+            kind="text", x=39, y=29, width=20, height=20, name="t", text="A"
+        )
+        self.project.elements.append(element)
+        self.view.snapping = True
+        rect, guides = self.view._align_rect(element.rect, None, element.id)
+        self.assertEqual(rect.center_x, 50)
+        self.assertEqual(rect.center_y, 40)
+        self.assertIn("x", [axis for axis, _ in guides])
+        self.assertIn("y", [axis for axis, _ in guides])
+
     def test_grid_is_rendered_above_base_image(self) -> None:
         scene = CoverScene()
         scene.canvas_width = 100

@@ -11,6 +11,10 @@
 !/tests
 !/tools
 !/installer
+# === 只放行 docs/CODEMAP.md ===
+!/docs
+/docs/*
+!/docs/CODEMAP.md
 
 # 始终排除环境、缓存与构建产物（即使位于白名单目录内）
 .venv/

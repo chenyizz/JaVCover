@@ -33,9 +33,19 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.i
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加快捷方式："
+Name: "associate"; Description: "将 .javcover 模板关联到 JAVCover（双击/拖到 exe 用本程序打开）"; GroupDescription: "文件关联："
 
 [Files]
 Source: "..\dist\JAVCover\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+
+[Registry]
+; 按用户关联（HKCU\Software\Classes），无需管理员权限。
+Root: HKCU; Subkey: "Software\Classes\.javcover"; ValueType: string; ValueName: ""; ValueData: "JAVCover.Template"; Flags: uninsdeletevalue; Tasks: associate
+Root: HKCU; Subkey: "Software\Classes\JAVCover.Template"; ValueType: string; ValueName: ""; ValueData: "JAVCover 模板"; Flags: uninsdeletekey; Tasks: associate
+Root: HKCU; Subkey: "Software\Classes\JAVCover.Template\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"; Tasks: associate
+Root: HKCU; Subkey: "Software\Classes\JAVCover.Template\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""; Tasks: associate
+Root: HKCU; Subkey: "Software\Classes\Applications\{#AppExeName}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""; Tasks: associate
+Root: HKCU; Subkey: "Software\Classes\Applications\{#AppExeName}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"; Tasks: associate
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
