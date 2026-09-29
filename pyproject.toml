@@ -14,6 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 psd = ["psd-tools>=1.9,<2"]
+cmyk = ["Pillow>=10"]
 build = ["pyinstaller>=6.0,<7"]
 
 [project.scripts]

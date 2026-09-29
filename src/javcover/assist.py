@@ -6,12 +6,14 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
 
 from javcover.models import Rect
+from javcover.tasks import TaskCancelled
 
 
 def suggest_color_blocks(image: QImage) -> list[Rect]:
@@ -161,6 +163,7 @@ def recognize_japanese_text(
     image: QImage,
     executable: str | None = None,
     tessdata_dir: str | None = None,
+    cancel_event: object = None,
 ) -> list[tuple[Rect, str]]:
     binary = resolve_tesseract(executable)
     languages = list_tesseract_languages(binary, tessdata_dir)
@@ -172,35 +175,53 @@ def recognize_japanese_text(
             f"{configured} 缺少语言数据：{needed}。请在“工具 → OCR 设置”指定包含 "
             "jpn.traineddata 和 eng.traineddata 的 tessdata 文件夹。"
         )
+    if cancel_event is not None and cancel_event.is_set():
+        raise TaskCancelled()
     with tempfile.TemporaryDirectory(prefix="javcover-ocr-") as directory:
         image_path = Path(directory) / "source.png"
         if not image.save(str(image_path), "PNG"):
             raise RuntimeError("无法为 OCR 创建临时图片。")
+        command = [
+            binary,
+            *(["--tessdata-dir", tessdata_dir] if tessdata_dir else []),
+            str(image_path),
+            "stdout",
+            "-l",
+            "jpn+eng",
+            "tsv",
+        ]
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        deadline = time.monotonic() + 120
         try:
-            result = subprocess.run(
-                [
-                    binary,
-                    *(["--tessdata-dir", tessdata_dir] if tessdata_dir else []),
-                    str(image_path),
-                    "stdout",
-                    "-l",
-                    "jpn+eng",
-                    "tsv",
-                ],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=120,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as error:
-            raise RuntimeError("OCR 超过 120 秒，已停止本次识别。") from error
-    if result.returncode:
-        detail = result.stderr.strip() or f"Tesseract 返回代码 {result.returncode}"
+            while True:
+                try:
+                    stdout, stderr = process.communicate(timeout=0.3)
+                    break
+                except subprocess.TimeoutExpired:
+                    if cancel_event is not None and cancel_event.is_set():
+                        process.kill()
+                        process.communicate()
+                        raise TaskCancelled()
+                    if time.monotonic() > deadline:
+                        process.kill()
+                        process.communicate()
+                        raise RuntimeError("OCR 超过 120 秒，已停止本次识别。")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+    if process.returncode:
+        detail = (stderr or "").strip() or f"Tesseract 返回代码 {process.returncode}"
         raise RuntimeError(f"OCR 识别失败：{detail}")
     recognized: list[tuple[Rect, str]] = []
-    for row in csv.DictReader(result.stdout.splitlines(), delimiter="\t"):
+    for row in csv.DictReader((stdout or "").splitlines(), delimiter="\t"):
         text = (row.get("text") or "").strip()
         try:
             confidence = float(row.get("conf", "-1"))

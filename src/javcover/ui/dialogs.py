@@ -227,6 +227,16 @@ class PreferencesDialog(QDialog):
         icc_layout.addWidget(self.icc_profile)
         icc_layout.addWidget(icc_browse)
         general_form.addRow("ICC 颜色配置文件", icc_row)
+        cmyk_row = QWidget(general_tab)
+        cmyk_layout = QHBoxLayout(cmyk_row)
+        cmyk_layout.setContentsMargins(0, 0, 0, 0)
+        self.cmyk_profile = QLineEdit(str(preferences["export/cmykProfile"]))
+        self.cmyk_profile.setPlaceholderText("可选：CMYK 输出配置文件（用于“导出 CMYK”）")
+        cmyk_browse = QPushButton("浏览…")
+        cmyk_browse.clicked.connect(self._choose_cmyk_profile)
+        cmyk_layout.addWidget(self.cmyk_profile)
+        cmyk_layout.addWidget(cmyk_browse)
+        general_form.addRow("CMYK 输出配置文件", cmyk_row)
         tabs.addTab(general_tab, "常规")
 
         shortcuts_tab = QWidget(tabs)
@@ -273,6 +283,7 @@ class PreferencesDialog(QDialog):
             "export/jpegQuality": self.jpeg_quality.value(),
             "recovery/directory": self.recovery_dir.text().strip(),
             "export/iccProfile": self.icc_profile.text().strip(),
+            "export/cmykProfile": self.cmyk_profile.text().strip(),
         }
 
     def shortcut_sequences(self) -> dict[str, QKeySequence]:
@@ -337,6 +348,16 @@ class PreferencesDialog(QDialog):
         )
         if chosen:
             self.icc_profile.setText(chosen)
+
+    def _choose_cmyk_profile(self) -> None:
+        chosen, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择 CMYK 输出配置文件",
+            self.cmyk_profile.text(),
+            "ICC 配置 (*.icc *.icm);;所有文件 (*)",
+        )
+        if chosen:
+            self.cmyk_profile.setText(chosen)
 
     def _update_color_button(self) -> None:
         self.pasteboard_color_button.setText(self.pasteboard_color)

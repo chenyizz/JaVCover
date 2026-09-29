@@ -145,12 +145,12 @@ class CoverScene(QGraphicsScene):
         minor_spacing = self.grid_size / max(1, self.grid_subdivisions)
         if self.grid_visible and major_screen_spacing >= 2.5:
             draw_minor = minor_spacing * scale >= 5
-            minor_pen = QPen(QColor(15, 19, 27, 150), 0)
-            minor_light_pen = QPen(QColor(255, 255, 255, 125), 0)
-            major_pen = QPen(QColor(15, 19, 27, 205), 0)
-            major_light_pen = QPen(QColor(255, 255, 255, 235), 0)
-            for pen in (minor_pen, major_pen):
-                pen.setWidth(3)
+            minor_pen = QPen(QColor(15, 19, 27, 110), 0)
+            minor_light_pen = QPen(QColor(255, 255, 255, 90), 0)
+            major_pen = QPen(QColor(15, 19, 27, 170), 0)
+            major_light_pen = QPen(QColor(255, 255, 255, 200), 0)
+            for pen in (minor_pen, minor_light_pen, major_pen, major_light_pen):
+                pen.setWidth(1)
                 pen.setCosmetic(True)
             if draw_minor:
                 painter.setPen(minor_pen)
@@ -214,7 +214,7 @@ class CoverScene(QGraphicsScene):
             line = (guide.position, visible.top(), guide.position, visible.bottom())
         else:
             line = (visible.left(), guide.position, visible.right(), guide.position)
-        shadow_pen = QPen(QColor("#17212b"), 3)
+        shadow_pen = QPen(QColor(23, 33, 43, 140), 1)
         shadow_pen.setCosmetic(True)
         painter.setPen(shadow_pen)
         painter.drawLine(*line)

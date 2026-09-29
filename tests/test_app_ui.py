@@ -1,5 +1,6 @@
 import os
 import tempfile
+import time
 import unittest
 from importlib.util import find_spec
 from pathlib import Path
@@ -28,6 +29,7 @@ from javcover.app import (
     format_output_name,
 )
 from javcover.image_ops import encode_png
+from javcover.tasks import TaskCancelled
 from javcover.models import DesignElement, Project, Rect, Region
 
 
@@ -434,6 +436,7 @@ class MainWindowStyleTests(unittest.TestCase):
             dialog._update_color_button()
             dialog.jpeg_quality.setValue(80)
             dialog.wheel_zoom.setCurrentIndex(dialog.wheel_zoom.findData("ctrl"))
+            dialog.cmyk_profile.setText("C:/profiles/coated.icc")
             dialog._shortcut_edits["fit-canvas"].setKeySequence(
                 QKeySequence("Ctrl+Shift+F")
             )
@@ -454,6 +457,9 @@ class MainWindowStyleTests(unittest.TestCase):
                 self.assertEqual(settings.value("canvas/defaultHeight"), 900)
                 self.assertEqual(settings.value("export/jpegQuality"), 80)
                 self.assertEqual(settings.value("canvas/wheelZoomModifier"), "ctrl")
+                self.assertEqual(
+                    settings.value("export/cmykProfile"), "C:/profiles/coated.icc"
+                )
             finally:
                 window.close()
 
@@ -504,7 +510,7 @@ class MainWindowStyleTests(unittest.TestCase):
             try:
                 window._run_background(
                     "测试任务",
-                    lambda: 42,
+                    lambda cancel: 42,
                     results.append,
                     results.append,
                 )
@@ -945,6 +951,98 @@ class MainWindowStyleTests(unittest.TestCase):
             try:
                 window.run_color_block_assist()
                 self.assertGreater(len(window.project.regions), 1)
+            finally:
+                window.dirty = False
+                window.close()
+
+    def test_tool_rail_forced_visible_after_restore(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            settings_path = str(Path(directory) / "ui.ini")
+            first = MainWindow(
+                settings=QSettings(settings_path, QSettings.Format.IniFormat)
+            )
+            first.show()
+            self.app.processEvents()
+            first.tool_rail.setVisible(False)
+            first._save_user_interface_state()
+            first.dirty = False
+            first.close()
+            second = MainWindow(
+                settings=QSettings(settings_path, QSettings.Format.IniFormat)
+            )
+            second.show()
+            self.app.processEvents()
+            try:
+                self.assertTrue(second.tool_rail.isVisible())
+            finally:
+                second.dirty = False
+                second.close()
+
+    def test_background_worker_can_be_cancelled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            window = MainWindow(
+                settings=QSettings(
+                    str(Path(directory) / "ui.ini"), QSettings.Format.IniFormat
+                )
+            )
+            window.show()
+            self.app.processEvents()
+            results: list[object] = []
+            cancelled: list[bool] = []
+
+            def work(cancel: object) -> str:
+                for _ in range(300):
+                    if cancel.is_set():
+                        raise TaskCancelled()
+                    time.sleep(0.01)
+                return "done"
+
+            try:
+                window._run_background(
+                    "测试任务",
+                    work,
+                    results.append,
+                    results.append,
+                    on_cancel=lambda: cancelled.append(True),
+                )
+                for _ in range(200):
+                    self.app.processEvents()
+                    if window._background_worker is not None:
+                        break
+                    QTest.qWait(10)
+                self.assertIsNotNone(window._background_worker)
+                window._background_worker.request_cancel()
+                for _ in range(400):
+                    self.app.processEvents()
+                    if cancelled or results:
+                        break
+                    QTest.qWait(10)
+                self.assertEqual(cancelled, [True])
+                self.assertEqual(results, [])
+                self.assertIsNone(window._background_worker)
+            finally:
+                window.dirty = False
+                window.close()
+
+    @unittest.skipIf(find_spec("PIL") is None, "Pillow not installed")
+    def test_render_cmyk_produces_cmyk_tiff(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            window = MainWindow(
+                settings=QSettings(
+                    str(Path(directory) / "ui.ini"), QSettings.Format.IniFormat
+                )
+            )
+            try:
+                art = QImage(4, 4, QImage.Format.Format_ARGB32)
+                art.fill(QColor("#ff0000"))
+                project = Project(width=4, height=4, base_png=encode_png(art))
+                destination = Path(directory) / "out.tif"
+                window._render_cmyk(project, destination, "", 95)
+                self.assertTrue(destination.is_file())
+                from PIL import Image
+
+                with Image.open(str(destination)) as opened:
+                    self.assertEqual(opened.mode, "CMYK")
             finally:
                 window.dirty = False
                 window.close()

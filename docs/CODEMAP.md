@@ -23,6 +23,7 @@ JAVCover/
 │   ├── app.py                  # 入口 main() 与公共符号再导出（兼容旧导入）
 │   ├── constants.py            # 混合模式标签、图片后缀、批量文件名格式化
 │   ├── resources.py            # 图标目录定位（打包后仍指向包内 icons/）
+│   ├── tasks.py                # TaskCancelled 取消异常
 │   ├── assist.py               # 大色块候选与 Tesseract 日文 OCR 适配
 │   ├── canvas_widgets.py       # 像素标尺、参考线拖入
 │   ├── image_ops.py            # 图片读取、PNG 编码、项目图层合成
@@ -116,7 +117,7 @@ tests/
 - `main()`：启动时安装 `qtbase_zh_CN` QTranslator，使标准对话框按钮（保存/放弃/取消/确定等）本地化为中文。
 - `CoverView`：左键选框/对象移动与八向调整（角手柄按住 Shift 等比缩放）、右键/中键平移、滚轮缩放（缩放修饰键由 `wheel_zoom_modifier` 控制：none/ctrl/alt/shift/disabled）、参考线操作；接受图片/PSD 拖放并发 `filesDropped`；`set_project(preserve_view=True)` 供撤销/重做保留视图；`_constrain_element_rect` / `reclamp_linked_elements` 把关联区域的图层限制在区域内；`_align_rect` / `set_alignment_guides` 在移动时向画布/区域/其它图层中心与边缘吸附并显示紫色对齐线。锁定区域/图层不出手柄、不响应移动/缩放。使用 `FullViewportUpdate` 避免增删候选框时的残影。
 - `_startup_path` / `MainWindow.open_path`：读取命令行/拖到 exe 传入的 `.javcover` 或图片路径并打开（配合安装脚本的可选文件关联）。
-- `_BackgroundWorker` / `MainWindow._run_background`：以 `QThread` + 模态 `QProgressDialog` 执行 OCR、PSD 导入与导出，避免 UI 线程阻塞；进行中禁止关闭主窗口。
+- `_BackgroundWorker` / `MainWindow._run_background`：以 `QThread` + 模态 `QProgressDialog`（带“取消”）执行 OCR、PSD 导入、导出、CMYK、批量；work 回调接收 `threading.Event`，置位后协作者抛 `TaskCancelled`；OCR 用 `Popen` 轮询并终止子进程。进行中禁止关闭主窗口。
 - `_apply_ocr_candidates`：在 UI 线程裁剪 OCR 候选为画布内区域并建立候选框。
 - `_analysis_image`：色块/OCR 分析改用 `compose_project` 合成图（底图 + 可见区域背景），因此打开只含区域背景的模板后仍可重新划分区域。
 - `TextElementDialog`：系统字体选择及文字内容、字号、填充/描边、竖排等设置。
@@ -129,6 +130,8 @@ tests/
 - `_autosave` / `_offer_recovery` / `_clear_recovery` / `_update_recovery_path`：编辑后延迟自动保存到 `recovery/directory`（默认 `AppLocalDataLocation`）下的 `recovery.javcover`，启动时若发现上次未正常退出则提示恢复；干净保存/退出会清除。仅在默认设置（真实运行）时启用，测试注入 QSettings 时关闭。
 - `duplicate_selected_region` / `_rename_region_from_list`：复制区域（新 id、偏移、选中）、双击列表重命名区域。
 - `_apply_icc_profile`：导出时（若设置了 `export/iccProfile`）用 `QColorSpace.fromIccProfile` 给图像附加颜色空间。
+- `export_cmyk` / `_render_cmyk`：用 Pillow 将合成图转 CMYK（可选 `export/cmykProfile` 经 ImageCms 转换并嵌入），保存 TIFF/JPEG；Pillow 缺失时提示 `.[cmyk]`。
+- `_create_toolbar` / `_create_tool_rail`：工具条引用与 `toggleViewAction` 加入“视图”菜单；`_restore_user_interface_state` 启动时强制显示被旧布局隐藏的工具条。
 - `format_output_name`：批量导出文件名占位符 `{name}` / `{index}` / `{date}` 展开。
 - `PreferencesDialog`：提供常规选项和可配置 QAction 快捷键，检测重复键位并支持清空/恢复默认。
 - `_new_inspector_card` / `_bind_panel_action`：将区域、参考线、图层各自建成独立 `QDockWidget`（可停靠任意边、浮动、关闭、嵌套/标签），内部为竖向 `QSplitter`（上半为控件 `QScrollArea` 区、下半为列表，可拖动改变列表高度）；对应“视图”菜单动作与面板可见性双向同步，布局由 `QMainWindow.saveState`/`restoreState` 持久化。

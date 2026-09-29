@@ -15,7 +15,9 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtCore import (
+    QBuffer,
     QEvent,
+    QIODevice,
     QLibraryInfo,
     QObject,
     QPointF,
@@ -128,6 +130,7 @@ from javcover.ui.widgets import (
     _WindowControlButton,
 )
 from javcover.ui.worker import _BackgroundWorker
+from javcover.tasks import TaskCancelled
 
 
 class MainWindow(QMainWindow):
@@ -288,6 +291,10 @@ class MainWindow(QMainWindow):
         self._action(
             self.file_menu, "导出 PNG/JPEG…", self.export_image,
             QKeySequence("Ctrl+E"), "export-image"
+        )
+        self._action(
+            self.file_menu, "导出 CMYK (TIFF/JPEG)…", self.export_cmyk,
+            shortcut_id="export-cmyk"
         )
         self._action(
             self.file_menu, "批量生成封面…", self.batch_export,
@@ -594,6 +601,7 @@ class MainWindow(QMainWindow):
             "export/jpegQuality": self._setting_int("export/jpegQuality", 95, 1, 100),
             "recovery/directory": str(self.settings.value("recovery/directory", "") or ""),
             "export/iccProfile": str(self.settings.value("export/iccProfile", "") or ""),
+            "export/cmykProfile": str(self.settings.value("export/cmykProfile", "") or ""),
         }
 
     def _apply_preferences(self, preferences: dict[str, bool | int | str]) -> None:
@@ -654,6 +662,10 @@ class MainWindow(QMainWindow):
         toolbar.setMovable(False)
         toolbar.setIconSize(QSize(18, 18))
         self.addToolBar(toolbar)
+        self.view_options_toolbar = toolbar
+        options_toggle = toolbar.toggleViewAction()
+        options_toggle.setText("视图与吸附工具条")
+        self.view_menu.addAction(options_toggle)
         self.snap_checkbox = QCheckBox("磁吸")
         self.snap_checkbox.setChecked(self._setting_bool("canvas/snapping", True))
         self.snap_checkbox.toggled.connect(self._set_snapping)
@@ -705,6 +717,10 @@ class MainWindow(QMainWindow):
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         toolbar.setIconSize(QSize(18, 18))
         self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, toolbar)
+        self.tool_rail = toolbar
+        rail_toggle = toolbar.toggleViewAction()
+        rail_toggle.setText("画布工具条")
+        self.view_menu.addAction(rail_toggle)
         select_action = self._tool_action(
             "选择", "click.svg", "选择并移动区域或图层", lambda: None,
             "select-tool", QKeySequence("V")
@@ -778,6 +794,15 @@ class MainWindow(QMainWindow):
         state = self.settings.value("window/state")
         if state:
             self.restoreState(state)
+        # A stale/incompatible saved state used to leave the toolbars hidden with
+        # no way to bring them back; force them visible at startup.
+        if hasattr(self, "tool_rail") and not self.tool_rail.isVisible():
+            self.tool_rail.setVisible(True)
+        if (
+            hasattr(self, "view_options_toolbar")
+            and not self.view_options_toolbar.isVisible()
+        ):
+            self.view_options_toolbar.setVisible(True)
 
     def _save_user_interface_state(self) -> None:
         self.settings.setValue("window/geometry", self.saveGeometry())
@@ -2183,11 +2208,12 @@ class MainWindow(QMainWindow):
         executable = str(self.settings.value("ocr/tesseractPath", "") or "") or None
         tessdata_dir = str(self.settings.value("ocr/tessdataPath", "") or "") or None
 
-        def work() -> list[tuple[Rect, str]]:
+        def work(cancel) -> list[tuple[Rect, str]]:
             return recognize_japanese_text(
                 analysis,
                 executable=executable,
                 tessdata_dir=tessdata_dir,
+                cancel_event=cancel,
             )
 
         def on_success(candidates: list[tuple[Rect, str]]) -> None:
@@ -2442,7 +2468,9 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        def work() -> Project:
+        def work(cancel) -> Project:
+            if cancel.is_set():
+                raise TaskCancelled()
             return import_psd(path)
 
         def on_success(project: Project) -> None:
@@ -2693,7 +2721,9 @@ class MainWindow(QMainWindow):
         quality = self._setting_int("export/jpegQuality", 95, 1, 100)
         project = self.project
 
-        def work() -> Path:
+        def work(cancel) -> Path:
+            if cancel.is_set():
+                raise TaskCancelled()
             return self._render_export(project, destination, image_format, quality)
 
         def on_success(saved: Path) -> None:
@@ -2705,6 +2735,98 @@ class MainWindow(QMainWindow):
             self._error("导出失败", str(error))
 
         self._run_background("正在导出封面…", work, on_success, on_error)
+
+    def _render_cmyk(
+        self,
+        project: Project,
+        destination: Path,
+        profile: str,
+        quality: int,
+    ) -> Path:
+        from io import BytesIO
+
+        from PIL import Image, ImageCms
+
+        image = compose_project(project)
+        flattened = QImage(image.size(), QImage.Format.Format_RGB32)
+        flattened.fill(QColor("#ffffff"))
+        painter = QPainter(flattened)
+        painter.drawImage(0, 0, image)
+        painter.end()
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        flattened.save(buffer, "PNG")
+        data = bytes(buffer.data())
+        buffer.close()
+        pil = Image.open(BytesIO(data)).convert("RGB")
+        icc_bytes: bytes | None = None
+        if profile:
+            profile_path = Path(profile)
+            if profile_path.is_file():
+                icc_bytes = profile_path.read_bytes()
+                try:
+                    destination_profile = ImageCms.ImageCmsProfile(BytesIO(icc_bytes))
+                    pil = ImageCms.profileToProfile(
+                        pil,
+                        ImageCms.createProfile("sRGB"),
+                        destination_profile,
+                        outputMode="CMYK",
+                        renderingIntent=ImageCms.Intent.PERCEPTUAL,
+                    )
+                except Exception:  # noqa: BLE001 - fall back to a naive conversion
+                    pil = pil.convert("CMYK")
+            else:
+                pil = pil.convert("CMYK")
+        else:
+            pil = pil.convert("CMYK")
+        save_kwargs: dict[str, object] = {}
+        if icc_bytes:
+            save_kwargs["icc_profile"] = icc_bytes
+        if destination.suffix.lower() in (".jpg", ".jpeg"):
+            save_kwargs["quality"] = quality
+        pil.save(str(destination), **save_kwargs)
+        return destination
+
+    def export_cmyk(self) -> None:
+        try:
+            import PIL  # noqa: F401
+        except ImportError:
+            self._error(
+                "需要 Pillow",
+                "CMYK 导出需要 Pillow 依赖，请运行：\n"
+                '.\\\\.venv\\\\Scripts\\\\python.exe -m pip install -e ".[cmyk]"',
+            )
+            return
+        default = Path(self._default_export_path()).with_suffix(".tif")
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出 CMYK",
+            str(default),
+            "TIFF 图片 (*.tif *.tiff);;JPEG 图片 (*.jpg *.jpeg)",
+        )
+        if not path:
+            return
+        destination = Path(path)
+        if destination.suffix.lower() not in (".tif", ".tiff", ".jpg", ".jpeg"):
+            destination = destination.with_suffix(".tif")
+        profile = str(self.settings.value("export/cmykProfile", "") or "")
+        quality = self._setting_int("export/jpegQuality", 95, 1, 100)
+        project = self.project
+
+        def work(cancel) -> Path:
+            if cancel.is_set():
+                raise TaskCancelled()
+            return self._render_cmyk(project, destination, profile, quality)
+
+        def on_success(saved: Path) -> None:
+            self.settings.setValue("export/lastDir", str(saved.parent))
+            self.settings.sync()
+            self.status.setText(f"已导出 CMYK：{saved}")
+
+        def on_error(error: object) -> None:
+            self._error("CMYK 导出失败", str(error))
+
+        self._run_background("正在导出 CMYK…", work, on_success, on_error)
 
     def batch_export(self) -> None:
         if not self.project.regions:
@@ -2844,11 +2966,13 @@ class MainWindow(QMainWindow):
         stems = sorted(all_stems)
         date_token = datetime.now().strftime("%Y%m%d")
 
-        def work() -> tuple[list[Path], list[tuple[str, str]], int]:
+        def work(cancel) -> tuple[list[Path], list[tuple[str, str]], int]:
             outputs: list[Path] = []
             failures: list[tuple[str, str]] = []
             partial = 0
             for index, stem in enumerate(stems, start=1):
+                if cancel.is_set():
+                    raise TaskCancelled()
                 region_sources = [
                     (region_id, mapping[stem])
                     for region_id, mapping in per_region
@@ -3055,14 +3179,14 @@ class MainWindow(QMainWindow):
         work: object,
         on_success: object,
         on_error: object,
+        on_cancel: object = None,
     ) -> None:
         if self._background_worker is not None and self._background_worker.isRunning():
             self._error("操作进行中", "请等待当前操作完成后再试。")
             return
-        dialog = QProgressDialog(label, "", 0, 0, self)
+        dialog = QProgressDialog(label, "取消", 0, 0, self)
         dialog.setWindowTitle("JAVCover")
         dialog.setWindowModality(Qt.WindowModality.WindowModal)
-        dialog.setCancelButton(None)
         dialog.setMinimumDuration(0)
         dialog.setAutoClose(False)
         dialog.setAutoReset(False)
@@ -3083,8 +3207,17 @@ class MainWindow(QMainWindow):
             finish()
             on_error(error)
 
+        def handle_cancel() -> None:
+            finish()
+            if on_cancel is not None:
+                on_cancel()
+            else:
+                self.status.setText(f"已取消：{label}")
+
         worker.succeeded.connect(handle_success)
         worker.failed.connect(handle_failure)
+        worker.cancelled.connect(handle_cancel)
+        dialog.canceled.connect(worker.request_cancel)
         dialog.show()
         worker.start()
 
