@@ -30,6 +30,7 @@ from javcover.app import (
 )
 from javcover.image_ops import encode_png
 from javcover.tasks import TaskCancelled
+from javcover.ui.main_window import _asset_display_name
 from javcover.models import DesignElement, Project, Rect, Region
 
 
@@ -1046,6 +1047,21 @@ class MainWindowStyleTests(unittest.TestCase):
             finally:
                 window.dirty = False
                 window.close()
+
+    def test_asset_display_name_strips_uuid_prefix(self) -> None:
+        self.assertEqual(
+            _asset_display_name(
+                Path("b14698335a434e5a8f30496bc53467b3_1-seeklogo.png")
+            ),
+            "1-seeklogo",
+        )
+        self.assertEqual(
+            _asset_display_name(Path("封面素材.png")), "封面素材"
+        )
+        self.assertEqual(
+            _asset_display_name(Path("abcdef0123456789abcdef0123456789_标 题.psd")),
+            "标 题",
+        )
 
     def test_grid_spin_buttons_step_and_respect_one_minimum(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

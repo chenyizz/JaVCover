@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import re
 import shutil
 import sys
 from datetime import datetime
@@ -47,8 +48,10 @@ from PySide6.QtGui import (
     QPainterPath,
     QPen,
     QPixmap,
+    QShortcut,
 )
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QColorDialog,
@@ -131,6 +134,14 @@ from javcover.ui.widgets import (
 )
 from javcover.ui.worker import _BackgroundWorker
 from javcover.tasks import TaskCancelled
+
+_ASSET_PREFIX = re.compile(r"^[0-9a-f]{32}_")
+
+
+def _asset_display_name(path: Path) -> str:
+    """Human-facing asset name: strips the uuid uniqueness prefix."""
+    stripped = _ASSET_PREFIX.sub("", path.stem)
+    return stripped or path.stem
 
 
 class MainWindow(QMainWindow):
@@ -1946,10 +1957,11 @@ class MainWindow(QMainWindow):
                 ):
                     continue
                 image = thumbnail(path)
+                display = _asset_display_name(path)
                 item = (
-                    QListWidgetItem(QIcon(QPixmap.fromImage(image)), path.stem)
+                    QListWidgetItem(QIcon(QPixmap.fromImage(image)), display)
                     if image is not None
-                    else QListWidgetItem(path.stem)
+                    else QListWidgetItem(display)
                 )
                 item.setData(Qt.ItemDataRole.UserRole, str(path))
                 item.setToolTip(str(path.parent))
@@ -2015,38 +2027,90 @@ class MainWindow(QMainWindow):
             self._place_asset(Path(item.data(Qt.ItemDataRole.UserRole)))
 
         def delete_selected() -> None:
-            item = listing.currentItem()
-            if item is None:
+            items = listing.selectedItems()
+            if not items:
                 return
-            path = Path(item.data(Qt.ItemDataRole.UserRole))
+            if len(items) == 1:
+                label = _asset_display_name(Path(items[0].data(Qt.ItemDataRole.UserRole)))
+                message = f"从本机素材库删除“{label}”？\n已放入画布的图层不受影响。"
+            else:
+                message = (
+                    f"从本机素材库删除选中的 {len(items)} 个素材？\n"
+                    "已放入画布的图层不受影响。"
+                )
             confirmed = QMessageBox.question(
                 dialog,
                 "删除素材",
-                f"从本机素材库删除“{path.name}”？\n已放入画布的图层不受影响。",
+                message,
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
             if confirmed != QMessageBox.StandardButton.Yes:
                 return
+            for item in items:
+                path = Path(item.data(Qt.ItemDataRole.UserRole))
+                try:
+                    path.unlink()
+                except OSError as error:
+                    self._error("删除素材失败", str(error))
+            refresh()
+
+        def rename_selected() -> None:
+            item = listing.currentItem()
+            if item is None:
+                return
+            path = Path(item.data(Qt.ItemDataRole.UserRole))
+            current = _asset_display_name(path)
+            name, accepted = QInputDialog.getText(
+                dialog, "重命名素材", "名称", text=current
+            )
+            name = name.strip()
+            if not accepted or not name or name == current:
+                return
+            match = _ASSET_PREFIX.match(path.stem)
+            prefix = match.group(0) if match else ""
+            destination = path.with_name(f"{prefix}{name}{path.suffix}")
+            if destination.exists():
+                self._error("重命名失败", "同名素材已存在。")
+                return
+            old_name = path.name
             try:
-                path.unlink()
+                path.rename(destination)
             except OSError as error:
-                self._error("删除素材失败", str(error))
+                self._error("重命名失败", str(error))
+                return
+            for element in self.project.elements:
+                if element.asset_name == old_name:
+                    element.asset_name = destination.name
             refresh()
 
         category_combo.currentIndexChanged.connect(lambda _index: refresh())
         new_category_button.clicked.connect(create_category)
+        listing.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        select_all = QShortcut(
+            QKeySequence(QKeySequence.StandardKey.SelectAll), listing
+        )
+        select_all.activated.connect(listing.selectAll)
+        rename_shortcut = QShortcut(QKeySequence("F2"), listing)
+        rename_shortcut.activated.connect(rename_selected)
+        delete_shortcut = QShortcut(
+            QKeySequence(QKeySequence.StandardKey.Delete), listing
+        )
+        delete_shortcut.activated.connect(delete_selected)
         buttons = QHBoxLayout()
         add_button = QPushButton("导入文件…")
         add_button.clicked.connect(import_assets)
         folder_button = QPushButton("导入文件夹…")
         folder_button.clicked.connect(import_folder)
+        rename_button = QPushButton("重命名")
+        rename_button.clicked.connect(rename_selected)
         delete_button = QPushButton("删除素材")
         delete_button.clicked.connect(delete_selected)
         place_button = QPushButton("放入画布")
         place_button.clicked.connect(place_selected)
         buttons.addWidget(add_button)
         buttons.addWidget(folder_button)
+        buttons.addWidget(rename_button)
         buttons.addWidget(delete_button)
         buttons.addStretch(1)
         buttons.addWidget(place_button)
@@ -2090,7 +2154,7 @@ class MainWindow(QMainWindow):
                 y=rect.y,
                 width=rect.width,
                 height=rect.height,
-                name=path.stem,
+                name=_asset_display_name(path),
                 png=encode_png(fitted),
                 region_id=region.id,
             )
@@ -2114,7 +2178,7 @@ class MainWindow(QMainWindow):
                 y=rect.y,
                 width=rect.width,
                 height=rect.height,
-                name=path.stem,
+                name=_asset_display_name(path),
                 png=encode_png(image),
             )
         self._link_asset(element, path)
